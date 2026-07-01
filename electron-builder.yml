@@ -1,0 +1,60 @@
+appId: com.liriodelosvalles.agente
+productName: Agente para Iglesias
+copyright: Copyright © 2026 Lirio de los Valles
+
+# Directorio de salida del instalador
+directories:
+  output: installer
+  buildResources: assets
+
+# Archivos que entran al asar/app (codigo compilado + package.json)
+files:
+  - dist-electron/**/*
+  - package.json
+
+# Recursos extras copiados a resources/ (accesibles en runtime via process.resourcesPath)
+# NO van dentro del asar → no requieren desempaquetado, son de solo lectura
+extraResources:
+  - from: plantillas/
+    to: plantillas/
+  - from: src/web/
+    to: web/
+  - from: data/biblias/
+    to: data/biblias/
+
+# Reconstruir modulos nativos (better-sqlite3) para la version exacta de Electron
+npmRebuild: true
+
+# Configuracion Windows
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icon.ico
+
+# Instalador NSIS
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Agente para Iglesias
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  installerHeader: assets/icon.ico
+  runAfterFinish: true
+
+# Publicacion via GitHub Releases (electron-updater).
+# Para activar:
+#   1. Crear repo en GitHub (ej. liriodelosvalles/agente-iglesias)
+#   2. Generar GitHub Personal Access Token con scope "repo"
+#   3. Agregar GH_TOKEN=<token> al .env local (NUNCA al repositorio)
+#   4. Ejecutar: npm run dist (publica el .exe + latest.yml al crear GitHub Release)
+# Para distribuir: crear un Release en GitHub con tag v1.0.0 y subir los artifacts.
+publish:
+  provider: github
+  owner: Asoc-Cristiana-Lirio-de-los-Valles-CR
+  repo: agente-iglesias
+  private: false
+  releaseType: release

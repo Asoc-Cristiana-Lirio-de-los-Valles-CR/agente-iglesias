@@ -1,0 +1,20 @@
+{
+  "name": "Juvenil",
+  "resolution": { "width": 1920, "height": 1080 },
+  "background": { "type": "color", "value": "#0D1B2A" },
+  "title": {
+    "top": 50, "left": 120, "width": 1680, "height": 150,
+    "align": "left", "valign": "top",
+    "fontFamily": "Verdana", "fontSize": 60, "color": "#00E5FF", "bold": true
+  },
+  "content": {
+    "top": 230, "left": 120, "width": 1680, "height": 650,
+    "align": "left", "valign": "center",
+    "fontFamily": "Verdana", "fontSize": 66, "color": "#FFFFFF", "bold": true
+  },
+  "footer": {
+    "top": 950, "left": 120, "width": 1680, "height": 80,
+    "align": "right", "valign": "bottom",
+    "fontFamily": "Verdana", "fontSize": 34, "color": "#FF4081"
+  }
+}

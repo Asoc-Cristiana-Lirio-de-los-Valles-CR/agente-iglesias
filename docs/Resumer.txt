@@ -1,0 +1,27 @@
+Listo, Rafael. Creé CLAUDE.md en la raíz con la arquitectura real del proyecto: comandos (dev/build/test/typecheck), las capas (UI → módulos → servicios → núcleo), el flujo completo del Módulo 1, cómo está encapsulado FreeShow, la estrategia cache-first de Biblia, el sistema de plantillas, la base SQLite, y cómo añadir módulos/proveedores nuevos sin tocar el núcleo.
+
+¿Dónde quedamos? Recapitulando el estado del proyecto:
+
+Construcción completa y verificada: 62 archivos, 46 pruebas pasando, typecheck limpio, flujo end-to-end probado en DRY_RUN (Mateo 2:2-6 → 5 diapositivas, Juan 3:16-18 → 3, Salmos 23 completo → 6, referencias inválidas reportadas sin romper el lote).
+Plugins instalados (frontend-design, superpowers, playwright, caveman) — pendiente reiniciar Claude Code para que carguen.
+CLAUDE.md — ✅ recién creado (esto era lo pendiente).
+Pendiente real para usar el sistema en producción:
+
+Activar la API en FreeShow (Settings → Connections) y probar contra tu FreeShow real (ahora DRY_RUN=false).
+Si quieres NTV/RVR1960/NVI: conseguir clave de API.Bible o tus propios archivos locales en data/biblias/.
+Reiniciar la sesión para los plugins, y opcionalmente usar frontend-design para pulir src/web/index.html y playwright para probar el flujo en navegador.
+¿Quieres que avancemos con alguno de estos puntos ahora?
+
+si quierea continuar mañana que debo decirte?
+Simplemente dime algo como:
+
+"Continuemos con el proyecto Agente para Iglesias" o "Retomemos donde quedamos con FreeShow"
+
+No necesitas repetir detalles — el CLAUDE.md que acabo de crear queda en el repositorio, así que cualquier sesión nueva de Claude Code que abras en esta carpeta (c:\Agente FreeShow Biblia) automáticamente va a leer ese archivo y va a tener el contexto completo de la arquitectura, comandos y flujo del Módulo 1.
+
+Lo único que sí conviene que menciones (porque no queda en el código, vive solo en esta conversación) es por dónde seguir, por ejemplo:
+
+"Quiero probar contra mi FreeShow real" → activamos la API en FreeShow y hacemos la prueba end-to-end de verdad.
+"Quiero mejorar la interfaz web" → usamos frontend-design (necesitas haber reiniciado Claude Code para que el plugin esté disponible).
+"Quiero configurar mi clave de API.Bible" → para usar NTV/RVR1960/NVI en vez de solo RVR1909.
+Cualquiera de esas frases me da suficiente contexto para retomar exactamente donde lo dejamos.

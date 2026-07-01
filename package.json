@@ -1,0 +1,46 @@
+{
+  "name": "agente-iglesias",
+  "version": "1.0.0",
+  "description": "Plataforma modular para iglesias. Modulo 1: generador automatico de presentaciones biblicas en FreeShow.",
+  "type": "module",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "tsc -p tsconfig.json",
+    "electron:build": "tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run build && npm run electron:build && electron .",
+    "dist": "npm run build && npm run electron:build && electron-builder build --win",
+    "restore:sqlite": "node \"C:/Program Files/nodejs/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js\" rebuild --release --directory node_modules/better-sqlite3",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "E2E=true vitest run test/e2e",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit"
+  },
+  "keywords": [
+    "freeshow",
+    "biblia",
+    "iglesia",
+    "presentaciones"
+  ],
+  "author": "Lirio de los Valles",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "dotenv": "^16.4.5",
+    "electron-updater": "^6.8.9",
+    "express": "^4.21.0",
+    "socket.io-client": "^4.7.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.5.0",
+    "electron": "^31.7.7",
+    "electron-builder": "^25.1.8",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

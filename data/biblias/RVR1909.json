@@ -1,0 +1,32 @@
+{
+  "version": "RVR1909",
+  "_nota": "Reina-Valera 1909 (dominio publico). Archivo de ejemplo y demostracion del esquema. Las claves de libro son los ids canonicos (ver src/modules/scripture/bookNames.ts).",
+  "books": {
+    "JHN": {
+      "3": {
+        "16": "Porque de tal manera amo Dios al mundo, que ha dado a su Hijo unigenito, para que todo aquel que en el cree, no se pierda, mas tenga vida eterna.",
+        "17": "Porque no envio Dios a su Hijo al mundo, para que condene al mundo, mas para que el mundo sea salvo por el.",
+        "18": "El que en el cree, no es condenado; mas el que no cree, ya es condenado, porque no creyo en el nombre del unigenito Hijo de Dios."
+      }
+    },
+    "PSA": {
+      "23": {
+        "1": "Jehova es mi pastor; nada me faltara.",
+        "2": "En lugares de delicados pastos me hara yacer: junto a aguas de reposo me pastoreara.",
+        "3": "Confortara mi alma: guiarame por sendas de justicia por amor de su nombre.",
+        "4": "Aunque ande en valle de sombra de muerte, no temere mal alguno; porque tu estaras conmigo: tu vara y tu cayado me infundiran aliento.",
+        "5": "Aderezas mesa delante de mi, en presencia de mis angustiadores: ungiste mi cabeza con aceite; mi copa esta rebosando.",
+        "6": "Ciertamente el bien y la misericordia me seguiran todos los dias de mi vida: y en la casa de Jehova morare por largos dias."
+      }
+    },
+    "MAT": {
+      "2": {
+        "2": "Diciendo: Donde esta el Rey de los Judios, que ha nacido? porque su estrella hemos visto en el oriente, y venimos a adorarle.",
+        "3": "Y oyendo esto el rey Herodes, se turbo, y toda Jerusalem con el.",
+        "4": "Y convocados todos los principes de los sacerdotes, y los escribas del pueblo, les pregunto donde habia de nacer el Cristo.",
+        "5": "Y ellos le dijeron: En Bethlehem de Judea; porque asi esta escrito por el profeta:",
+        "6": "Y tu, Bethlehem, de tierra de Juda, no eres muy pequena entre los principes de Juda; porque de ti saldra un guiador, que apacentara a mi pueblo Israel."
+      }
+    }
+  }
+}

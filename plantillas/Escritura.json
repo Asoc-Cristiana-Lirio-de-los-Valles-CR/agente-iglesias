@@ -1,0 +1,20 @@
+{
+  "name": "Escritura",
+  "resolution": { "width": 1920, "height": 1080 },
+  "background": { "type": "color", "value": "#000000" },
+  "title": {
+    "top": 0, "left": 0, "width": 0, "height": 0,
+    "align": "center", "valign": "center",
+    "fontFamily": "Arial", "fontSize": 1, "color": "#000000"
+  },
+  "content": {
+    "top": 60, "left": 100, "width": 1720, "height": 840,
+    "align": "center", "valign": "center",
+    "fontFamily": "Arial", "fontSize": 88, "color": "#FFFFFF", "bold": true
+  },
+  "footer": {
+    "top": 930, "left": 960, "width": 900, "height": 100,
+    "align": "right", "valign": "center",
+    "fontFamily": "Arial", "fontSize": 56, "color": "#FFFFFF", "bold": true
+  }
+}

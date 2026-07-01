@@ -1,0 +1,20 @@
+{
+  "name": "Conferencia",
+  "resolution": { "width": 1920, "height": 1080 },
+  "background": { "type": "color", "value": "#FFFFFF" },
+  "title": {
+    "top": 70, "left": 160, "width": 1600, "height": 130,
+    "align": "center", "valign": "top",
+    "fontFamily": "Calibri", "fontSize": 50, "color": "#1565C0", "bold": true
+  },
+  "content": {
+    "top": 230, "left": 200, "width": 1520, "height": 620,
+    "align": "center", "valign": "center",
+    "fontFamily": "Calibri", "fontSize": 60, "color": "#212121"
+  },
+  "footer": {
+    "top": 940, "left": 160, "width": 1600, "height": 90,
+    "align": "center", "valign": "bottom",
+    "fontFamily": "Calibri", "fontSize": 34, "color": "#757575"
+  }
+}

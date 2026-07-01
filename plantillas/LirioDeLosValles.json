@@ -1,0 +1,20 @@
+{
+  "name": "LirioDeLosValles",
+  "resolution": { "width": 1920, "height": 1080 },
+  "background": { "type": "color", "value": "#1A0E2E" },
+  "title": {
+    "top": 70, "left": 140, "width": 1640, "height": 150,
+    "align": "center", "valign": "top",
+    "fontFamily": "Georgia", "fontSize": 58, "color": "#E8C46A", "bold": true
+  },
+  "content": {
+    "top": 250, "left": 200, "width": 1520, "height": 600,
+    "align": "center", "valign": "center",
+    "fontFamily": "Georgia", "fontSize": 62, "color": "#FFFFFF"
+  },
+  "footer": {
+    "top": 940, "left": 140, "width": 1640, "height": 90,
+    "align": "center", "valign": "bottom",
+    "fontFamily": "Georgia", "fontSize": 38, "color": "#C9A8E0", "italic": true
+  }
+}

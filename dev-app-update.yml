@@ -1,0 +1,15 @@
+# Configuracion del updater para modo DESARROLLO.
+# Permite probar electron-updater sin publicar en GitHub.
+#
+# Para activar en dev: descomentar la linea en updater.ts:
+#   autoUpdater.updateConfigPath = path.join(process.cwd(), 'dev-app-update.yml')
+#
+# Y crear un servidor local con latest.yml + el .exe de prueba, o
+# apuntar a un GitHub Release real para validar el flujo completo.
+#
+# Este archivo NO se incluye en el instalador (no esta en extraResources).
+
+owner: Asoc-Cristiana-Lirio-de-los-Valles-CR
+repo: agente-iglesias
+provider: github
+updaterCacheDirName: agente-iglesias-updater

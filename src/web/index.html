@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agente para Iglesias — Presentaciones bíblicas</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --panel-2: #273449;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --accent: #6366f1;
+            --accent-2: #818cf8;
+            --ok: #22c55e;
+            --warn: #f59e0b;
+            --err: #ef4444;
+            --border: #334155;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+            background: var(--bg); color: var(--text); line-height: 1.5;
+        }
+        header {
+            padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
+        }
+        header h1 { font-size: 1.15rem; margin: 0; }
+        header .sub { color: var(--muted); font-size: .85rem; }
+        .status { font-size: .8rem; display: flex; align-items: center; gap: .4rem; }
+        .dot { width: .6rem; height: .6rem; border-radius: 50%; background: var(--muted); }
+        .dot.ok { background: var(--ok); } .dot.err { background: var(--err); }
+        main { max-width: 920px; margin: 0 auto; padding: 1.5rem; }
+        .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; margin-bottom: 1.25rem; }
+        label { display: block; font-size: .85rem; color: var(--muted); margin-bottom: .4rem; }
+        textarea {
+            width: 100%; min-height: 160px; resize: vertical; padding: .75rem .9rem;
+            background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+            border-radius: 8px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .95rem;
+        }
+        .row { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; align-items: flex-end; }
+        .row > div { flex: 1; min-width: 160px; }
+        select {
+            width: 100%; padding: .6rem .7rem; background: var(--panel-2); color: var(--text);
+            border: 1px solid var(--border); border-radius: 8px; font-size: .9rem;
+        }
+        .actions { display: flex; gap: .75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+        button {
+            border: none; border-radius: 8px; padding: .7rem 1.3rem; font-size: .95rem; font-weight: 600;
+            cursor: pointer; transition: filter .15s;
+        }
+        button.primary { background: var(--accent); color: white; }
+        button.primary:hover { filter: brightness(1.1); }
+        button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+        button:disabled { opacity: .6; cursor: not-allowed; }
+        .results { display: flex; flex-direction: column; gap: .5rem; }
+        .result { display: flex; align-items: center; gap: .7rem; padding: .6rem .8rem; border-radius: 8px; background: var(--panel-2); font-size: .9rem; }
+        .badge { font-size: .7rem; padding: .15rem .5rem; border-radius: 999px; font-weight: 700; white-space: nowrap; }
+        .badge.ok { background: rgba(34,197,94,.15); color: var(--ok); }
+        .badge.skip { background: rgba(245,158,11,.15); color: var(--warn); }
+        .badge.err { background: rgba(239,68,68,.15); color: var(--err); }
+        .result .name { flex: 1; }
+        .result .meta { color: var(--muted); font-size: .8rem; }
+        .summary { display: flex; gap: 1.25rem; margin-bottom: 1rem; font-size: .9rem; flex-wrap: wrap; }
+        .summary b { font-size: 1.1rem; }
+        .hidden { display: none; }
+        .hint { color: var(--muted); font-size: .8rem; margin-top: .5rem; }
+        a { color: var(--accent-2); }
+    </style>
+</head>
+<body>
+    <header>
+        <div>
+            <h1>🕊️ Agente para Iglesias</h1>
+            <div class="sub">Lirio de los Valles · Generador de presentaciones bíblicas para FreeShow</div>
+        </div>
+        <div class="status">
+            <span class="dot" id="fsDot"></span>
+            <span id="fsStatus">Comprobando FreeShow…</span>
+        </div>
+    </header>
+
+    <main>
+        <div class="card">
+            <label for="refs">Referencias bíblicas (una por línea)</label>
+            <textarea id="refs" placeholder="Mateo 2:2-6 NTV&#10;Juan 3:16 RVR1960&#10;Salmos 23 TLA&#10;1 Corintios 13 NVI"></textarea>
+            <div class="hint">
+                Acepta formatos flexibles: <code>Jn 3:16</code>, <code>juan 3 16</code>,
+                <code>Sal 23</code>, <code>Mateo 5:3-12</code>, <code>1 Co 13</code>. Si no indicas
+                versión, se usa la predeterminada.
+            </div>
+
+            <div class="row">
+                <div>
+                    <label for="version">Versión por defecto</label>
+                    <select id="version">
+                        <option value="">(predeterminada del servidor)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="template">Plantilla visual</label>
+                    <select id="template"><option value="">(activa)</option></select>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="primary" id="generate">Generar Presentación</button>
+                <button class="ghost" id="example">Cargar ejemplo</button>
+            </div>
+        </div>
+
+        <div class="card hidden" id="resultsCard">
+            <div class="summary" id="summary"></div>
+            <div class="results" id="results"></div>
+        </div>
+    </main>
+
+    <script>
+        const $ = (id) => document.getElementById(id)
+
+        async function checkStatus() {
+            try {
+                const r = await fetch("/api/status")
+                const s = await r.json()
+                $("fsDot").className = "dot " + (s.freeshow ? "ok" : "err")
+                $("fsStatus").textContent = s.freeshow
+                    ? "FreeShow conectado"
+                    : "FreeShow no responde (¿API activada?)"
+            } catch {
+                $("fsDot").className = "dot err"
+                $("fsStatus").textContent = "Servidor no disponible"
+            }
+        }
+
+        async function loadTemplates() {
+            try {
+                const r = await fetch("/api/scripture/templates")
+                const { templates, active } = await r.json()
+                const sel = $("template")
+                for (const t of templates) {
+                    const opt = document.createElement("option")
+                    opt.value = t; opt.textContent = t + (t === active ? " (activa)" : "")
+                    sel.appendChild(opt)
+                }
+            } catch {}
+        }
+
+        // Versiones realmente instaladas en FreeShow (Bibles/*.fsb) — sin lista fija.
+        async function loadVersions() {
+            try {
+                const r = await fetch("/api/scripture/versions")
+                const { versions } = await r.json()
+                const sel = $("version")
+                for (const v of versions) {
+                    const opt = document.createElement("option")
+                    opt.value = v.id; opt.textContent = v.name
+                    sel.appendChild(opt)
+                }
+            } catch {}
+        }
+
+        $("example").onclick = () => {
+            $("refs").value = "Mateo 2:2-6 NTV\nJuan 3:16 RVR1960\nSalmos 23 TLA\n1 Corintios 13 NVI"
+        }
+
+        $("generate").onclick = async () => {
+            const references = $("refs").value.trim()
+            if (!references) { alert("Escribe al menos una referencia."); return }
+            const btn = $("generate")
+            btn.disabled = true; btn.textContent = "Generando…"
+            try {
+                const r = await fetch("/api/scripture/generate", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        references,
+                        version: $("version").value || undefined,
+                        template: $("template").value || undefined,
+                    }),
+                })
+                const data = await r.json()
+                if (!r.ok) throw new Error(data.error || "Error desconocido")
+                render(data)
+            } catch (e) {
+                alert("Error: " + e.message)
+            } finally {
+                btn.disabled = false; btn.textContent = "Generar Presentación"
+                checkStatus()
+            }
+        }
+
+        function render(data) {
+            $("resultsCard").classList.remove("hidden")
+            $("summary").innerHTML =
+                `<span><b>${data.created}</b> creados</span>` +
+                `<span><b>${data.skipped}</b> omitidos</span>` +
+                `<span><b>${data.failed}</b> con error</span>`
+            const cont = $("results"); cont.innerHTML = ""
+            for (const it of data.items) {
+                const div = document.createElement("div")
+                div.className = "result"
+                const badge = it.ok
+                    ? (it.skipped ? '<span class="badge skip">OMITIDO</span>' : '<span class="badge ok">OK</span>')
+                    : '<span class="badge err">ERROR</span>'
+                const name = it.ok ? (it.projectName || it.raw) : it.raw
+                const meta = it.ok
+                    ? (it.slides ? `${it.slides} diapositivas` : "")
+                    : (it.error || "")
+                div.innerHTML = `${badge}<span class="name">${escapeHtml(name)}</span><span class="meta">${escapeHtml(meta)}</span>`
+                cont.appendChild(div)
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, (c) =>
+                ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
+        }
+
+        checkStatus(); loadTemplates(); loadVersions(); setInterval(checkStatus, 15000)
+    </script>
+</body>
+</html>
