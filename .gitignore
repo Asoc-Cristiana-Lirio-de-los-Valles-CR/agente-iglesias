@@ -22,3 +22,4 @@ installer/
 
 # Playwright snapshots (pruebas locales)
 .playwright-mcp/
+tokenGithub.env
