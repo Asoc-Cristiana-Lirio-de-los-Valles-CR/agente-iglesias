@@ -6,6 +6,21 @@ Orientaciones para Claude Code (claude.ai/code) al trabajar en este repositorio.
 
 Responder siempre en español. El usuario es Rafael, administra la iglesia "Lirio de los Valles" en Costa Rica.
 
+## Repositorio
+
+**GitHub**: `https://github.com/Asoc-Cristiana-Lirio-de-los-Valles-CR/agente-iglesias`
+**Org**: Asoc-Cristiana-Lirio-de-los-Valles-CR
+**Rama principal**: `main`
+**Versión actual**: 1.0.0
+
+Estado de las fases Electron:
+- ✅ Fase A — Electron: ventana + servidor (ESM/NodeNext, ServerManager)
+- ✅ Fase B — electron-builder: instalador NSIS `.exe` (79 MB)
+- ✅ Fase C — electron-updater: actualizaciones automáticas via GitHub Releases
+- ⏳ Fase D — Backup automático pre-update (pendiente)
+- ⏳ Fase E — Rollback tras fallo (pendiente)
+- ⏳ Fase F — Migraciones versionadas (pendiente)
+
 ## Comandos
 
 ```bash
@@ -211,9 +226,28 @@ npm run restore:sqlite   # restaura el addon para Node.js 24
 - **Sin control de carpeta**: el proyecto `Versiculos` se localiza por nombre exacto; no es posible garantizar en qué carpeta queda vía API. El usuario puede moverlo manualmente en FreeShow después de la primera generación.
 - **Shows de diagnóstico**: en el proyecto `Versiculos` de Rafael pueden existir shows de prueba creados durante el desarrollo (`TestDiag123`, etc.) sin `meta.createdBy`. El sincronizador los ignora correctamente (`ignoredUserShows`). Eliminables manualmente en FreeShow.
 
+## Git — flujo de trabajo
+
+```bash
+# Desarrollo normal
+git add -p                    # revisar cambios antes de commit
+git commit -m "tipo: mensaje"
+git push
+
+# Publicar nueva versión con instalador
+npm version patch             # bumps version (1.0.0 → 1.0.1)
+npm run dist                  # genera installer/ + latest.yml
+npm run restore:sqlite        # restaurar better-sqlite3 para Node.js
+npm test                      # verificar 68/68
+# Crear GitHub Release con tag v1.0.1 y subir artifacts de installer/
+```
+
+**No commitear jamás**: `.env` (tiene `GH_TOKEN`), `node_modules/`, `dist/`, `dist-electron/`, `installer/`.
+
 ## Restricciones importantes
 
 - Nunca incluir claves API en el código — siempre vía `.env`.
 - No empaquetar texto bíblico con copyright (NTV, RVR1960, NVI, etc.).
 - `DRY_RUN=true` deshabilita completamente las escrituras a FreeShow (incluido `ProjectSynchronizer`). Solo registra el JSON en logs.
 - No modificar archivos en `Bibles/` de FreeShow — acceso exclusivamente de lectura.
+- `GH_TOKEN` en `.env` — nunca en el repositorio.
