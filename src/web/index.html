@@ -68,6 +68,40 @@
         .hidden { display: none; }
         .hint { color: var(--muted); font-size: .8rem; margin-top: .5rem; }
         a { color: var(--accent-2); }
+        .label-row { display: flex; align-items: center; gap: .45rem; margin-bottom: .4rem; }
+        .label-row label { margin-bottom: 0; }
+        .help-btn {
+            width: 1.2rem; height: 1.2rem; padding: 0; border-radius: 50%;
+            display: inline-flex; align-items: center; justify-content: center;
+            background: transparent; border: 1px solid var(--border); color: var(--muted);
+            font-size: .7rem; font-weight: 700; cursor: pointer;
+        }
+        .help-btn:hover, .help-btn:focus-visible { border-color: var(--accent-2); color: var(--accent-2); outline: none; }
+        .help-panel {
+            margin-top: .6rem; padding: .8rem .9rem; background: var(--panel-2);
+            border: 1px solid var(--border); border-radius: 8px; font-size: .85rem;
+        }
+        .help-panel h3 { margin: 0 0 .5rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+        .help-panel .fmt {
+            font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .85rem;
+            background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+            padding: .45rem .6rem; margin-bottom: .6rem; display: inline-block;
+        }
+        .help-panel ul { margin: 0; padding-left: 1.1rem; color: var(--muted); line-height: 1.9; font-size: .8rem; }
+        .help-panel code { color: var(--text); }
+        .tok-book { color: var(--accent-2); }
+        .tok-ref { color: var(--ok); }
+        .tok-ver { color: var(--warn); }
+        .chips-header { display: flex; align-items: center; gap: .45rem; margin: .9rem 0 .45rem; font-size: .8rem; color: var(--muted); }
+        .chips-header .dot { width: .5rem; height: .5rem; }
+        .chips { display: flex; flex-wrap: wrap; gap: .45rem; }
+        .chip {
+            font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .78rem; font-weight: 600;
+            padding: .28rem .7rem; border-radius: 999px; cursor: pointer;
+            background: var(--panel-2); color: var(--accent-2); border: 1px solid var(--border);
+            transition: border-color .15s, background .15s;
+        }
+        .chip:hover, .chip:focus-visible { border-color: var(--accent); background: rgba(99,102,241,.15); outline: none; }
     </style>
 </head>
 <body>
@@ -84,13 +118,33 @@
 
     <main>
         <div class="card">
-            <label for="refs">Referencias bíblicas (una por línea)</label>
+            <div class="label-row">
+                <label for="refs">Referencias bíblicas (una por línea)</label>
+                <button type="button" class="help-btn" id="helpToggle" aria-expanded="false" aria-controls="helpPanel"
+                    title="Cómo escribir referencias">?</button>
+            </div>
             <textarea id="refs" placeholder="Mateo 2:2-6 NTV&#10;Juan 3:16 RVR1960&#10;Salmos 23 TLA&#10;1 Corintios 13 NVI"></textarea>
             <div class="hint">
-                Acepta formatos flexibles: <code>Jn 3:16</code>, <code>juan 3 16</code>,
-                <code>Sal 23</code>, <code>Mateo 5:3-12</code>, <code>1 Co 13</code>. Si no indicas
-                versión, se usa la predeterminada.
+                Formato: <code><span class="tok-book">Libro</span> <span class="tok-ref">Cap:Vers</span> <span class="tok-ver">VERSIÓN</span></code>
+                — ej: <code>Juan 3:16</code> · <code>Sal 23</code> · <code>Mateo 5:3-12 NTV</code>
             </div>
+            <div class="help-panel hidden" id="helpPanel">
+                <h3>Cómo escribir referencias</h3>
+                <div class="fmt"><span class="tok-book">Libro</span> <span class="tok-ref">Capítulo:Versículos</span> <span class="tok-ver">VERSIÓN</span></div>
+                <ul>
+                    <li><code>Juan 3:16</code> — un versículo</li>
+                    <li><code>Mateo 5:3-12</code> — un rango de versículos</li>
+                    <li><code>Salmos 23</code> — capítulo entero</li>
+                    <li><code>Jn 3:16</code>, <code>1 Co 13</code> — abreviaturas y libros numerados</li>
+                    <li>La <span class="tok-ver">versión</span> va al final y es opcional: <code>Juan 3:16 NTV</code>.
+                        Sin versión, se usa la predeterminada.</li>
+                </ul>
+            </div>
+            <div class="chips-header">
+                <span class="dot" id="versionsLive" title="Lista actualizada automáticamente"></span>
+                <span>Versiones instaladas en FreeShow (clic para usar)</span>
+            </div>
+            <div class="chips" id="versionChips"></div>
 
             <div class="row">
                 <div>
@@ -148,17 +202,86 @@
         }
 
         // Versiones realmente instaladas en FreeShow (Bibles/*.fsb) — sin lista fija.
-        async function loadVersions() {
+        // Se refresca periódicamente: el servidor vigila la carpeta Bibles, así
+        // que instalar/quitar una biblia se refleja aquí sin reiniciar nada.
+        let installedVersions = []
+
+        async function refreshVersions() {
             try {
                 const r = await fetch("/api/scripture/versions")
                 const { versions } = await r.json()
+                $("versionsLive").className = "dot ok"
+                // Sin cambios -> no tocar el DOM (evita cerrar el dropdown abierto y flicker).
+                if (JSON.stringify(versions) === JSON.stringify(installedVersions)) return
+                installedVersions = versions
+
                 const sel = $("version")
+                const selected = sel.value
+                sel.innerHTML = ""
+                const base = document.createElement("option")
+                base.value = ""; base.textContent = "(predeterminada del servidor)"
+                sel.appendChild(base)
                 for (const v of versions) {
                     const opt = document.createElement("option")
                     opt.value = v.id; opt.textContent = v.name
                     sel.appendChild(opt)
                 }
-            } catch {}
+                sel.value = versions.some((v) => v.id === selected) ? selected : ""
+
+                renderVersionChips(versions)
+            } catch {
+                $("versionsLive").className = "dot"
+            }
+        }
+
+        function renderVersionChips(versions) {
+            const cont = $("versionChips"); cont.innerHTML = ""
+            for (const v of versions) {
+                // El codigo corto (NTV, RVR1960…) es el que entiende el parser
+                // dentro de la referencia; el nombre largo queda como tooltip.
+                const label = v.code || v.id
+                const chip = document.createElement("button")
+                chip.type = "button"; chip.className = "chip"; chip.textContent = label
+                chip.title = `Usar ${v.name} en la línea actual`
+                chip.onclick = () => insertVersionAtCurrentLine(label)
+                cont.appendChild(chip)
+            }
+        }
+
+        // Inserta la versión al final de la línea donde está el cursor; si la
+        // línea ya termina en una versión INSTALADA la reemplaza. Se compara
+        // solo contra ids instalados (nunca regex genérica: no tocar "Juan" o "13").
+        // setRangeText reemplaza solo el rango de la línea, preservando el historial de undo.
+        function insertVersionAtCurrentLine(version) {
+            const ta = $("refs")
+            const text = ta.value
+            const lineStart = text.lastIndexOf("\n", ta.selectionStart - 1) + 1
+            let lineEnd = text.indexOf("\n", ta.selectionStart)
+            if (lineEnd === -1) lineEnd = text.length
+
+            const line = text.slice(lineStart, lineEnd).replace(/\s+$/, "")
+            let newLine
+            if (!line.trim()) {
+                newLine = version
+            } else {
+                const parts = line.split(/\s+/)
+                const last = parts[parts.length - 1].toLowerCase()
+                const isVersion = installedVersions.some(
+                    (v) => v.id.toLowerCase() === last || (v.code && v.code.toLowerCase() === last),
+                )
+                if (isVersion) parts[parts.length - 1] = version
+                else parts.push(version)
+                newLine = parts.join(" ")
+            }
+
+            ta.setRangeText(newLine, lineStart, lineEnd, "end")
+            ta.focus()
+        }
+
+        $("helpToggle").onclick = () => {
+            const panel = $("helpPanel")
+            const open = panel.classList.toggle("hidden") === false
+            $("helpToggle").setAttribute("aria-expanded", String(open))
         }
 
         $("example").onclick = () => {
@@ -218,7 +341,8 @@
                 ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]))
         }
 
-        checkStatus(); loadTemplates(); loadVersions(); setInterval(checkStatus, 15000)
+        checkStatus(); loadTemplates(); refreshVersions()
+        setInterval(() => { checkStatus(); refreshVersions() }, 15000)
     </script>
 </body>
 </html>

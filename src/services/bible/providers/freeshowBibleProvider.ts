@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, existsSync } from "node:fs"
+import { readFileSync, readdirSync, existsSync, watch, type FSWatcher } from "node:fs"
 import { join } from "node:path"
 import { homedir } from "node:os"
 import type { BibleProvider } from "../BibleProvider.js"
@@ -58,6 +58,15 @@ const VERSION_ALIASES: Record<string, string[]> = {
     CST: ["Castilian", "CST"],
 }
 
+/** nombre de archivo (minusculas, sin espacios) -> codigo corto. Derivado de VERSION_ALIASES. */
+const CODE_BY_ALIAS = new Map<string, string>()
+for (const [code, aliases] of Object.entries(VERSION_ALIASES)) {
+    for (const alias of aliases) {
+        const key = alias.toLowerCase().replace(/\s+/g, "")
+        if (!CODE_BY_ALIAS.has(key)) CODE_BY_ALIAS.set(key, code)
+    }
+}
+
 interface LoadedBible {
     /** nombre de version mostrado por FreeShow (igual que en su carpeta Bibles). */
     name: string
@@ -76,8 +85,82 @@ export class FreeShowBibleProvider implements BibleProvider {
     private cache = new Map<string, LoadedBible | null>()
     private scanned = false
     private filesByVersion = new Map<string, string>()
+    private watcher: FSWatcher | null = null
+    private debounceTimer: NodeJS.Timeout | null = null
+    private retryTimer: NodeJS.Timeout | null = null
+    private onLog: ((msg: string) => void) | undefined
+
+    /** fs.watch en Windows dispara varios eventos por escritura; se absorben con debounce. */
+    private static readonly INVALIDATE_DEBOUNCE_MS = 400
+    /** Si el watcher falla (carpeta inexistente/borrada) se reintenta cada 30s. */
+    private static readonly WATCH_RETRY_MS = 30_000
 
     constructor(private dataPath: string) {}
+
+    /**
+     * Descarta todo lo memoizado (indice de archivos y biblias parseadas):
+     * la siguiente consulta re-escanea la carpeta Bibles y relee los .fsb.
+     * Invalidacion global a proposito: las claves del cache incluyen aliases
+     * resueltos (RVR1960 -> "Reina-Valera 1960"), mapear archivo->claves es
+     * propenso a bugs y re-parsear ~200KB cuesta milisegundos.
+     */
+    invalidate(): void {
+        this.scanned = false
+        this.filesByVersion.clear()
+        this.cache.clear()
+    }
+
+    /**
+     * Vigila la carpeta Bibles para reflejar biblias instaladas/quitadas sin
+     * reiniciar. Idempotente y nunca lanza: si la carpeta no existe (o el
+     * watcher muere) se reintenta cada 30s sin romper el arranque.
+     */
+    startWatching(onLog?: (msg: string) => void): void {
+        if (onLog) this.onLog = onLog
+        if (this.watcher) return
+        try {
+            this.watcher = watch(this.biblesFolder, () => this.scheduleInvalidate())
+            this.watcher.on("error", () => {
+                this.disposeWatcher()
+                this.armRetry()
+            })
+            this.onLog?.(`Vigilando carpeta de biblias: ${this.biblesFolder}`)
+        } catch {
+            this.armRetry()
+        }
+    }
+
+    stopWatching(): void {
+        this.disposeWatcher()
+        if (this.debounceTimer) clearTimeout(this.debounceTimer)
+        this.debounceTimer = null
+        if (this.retryTimer) clearTimeout(this.retryTimer)
+        this.retryTimer = null
+    }
+
+    private disposeWatcher(): void {
+        this.watcher?.close()
+        this.watcher = null
+    }
+
+    private armRetry(): void {
+        if (this.retryTimer) return
+        this.retryTimer = setTimeout(() => {
+            this.retryTimer = null
+            this.startWatching()
+        }, FreeShowBibleProvider.WATCH_RETRY_MS)
+        this.retryTimer.unref?.()
+    }
+
+    private scheduleInvalidate(): void {
+        if (this.debounceTimer) clearTimeout(this.debounceTimer)
+        this.debounceTimer = setTimeout(() => {
+            this.debounceTimer = null
+            this.invalidate()
+            this.onLog?.("Carpeta de biblias cambio: cache invalidado")
+        }, FreeShowBibleProvider.INVALIDATE_DEBOUNCE_MS)
+        this.debounceTimer.unref?.()
+    }
 
     async getVerses(ref: BibleReference): Promise<Verse[]> {
         const bookNumber = BOOK_NUMBER_BY_ID.get(ref.bookId)
@@ -104,10 +187,28 @@ export class FreeShowBibleProvider implements BibleProvider {
         return out
     }
 
-    /** Lista las versiones realmente instaladas en la carpeta Bibles de FreeShow. */
-    listAvailableVersions(): { id: string; name: string }[] {
+    /**
+     * Lista las versiones realmente instaladas en la carpeta Bibles de FreeShow.
+     * `code` es el codigo corto (NTV, RVR1960…) si el nombre del archivo coincide
+     * con un alias conocido: es el que se usa en referencias inline y chips de la UI.
+     */
+    listAvailableVersions(): { id: string; name: string; code?: string }[] {
         this.scanFolder()
-        return [...this.filesByVersion.keys()].map((version) => ({ id: version, name: version }))
+        return [...this.filesByVersion.keys()].map((version) => {
+            const code = this.deriveCode(version)
+            return code ? { id: version, name: version, code } : { id: version, name: version }
+        })
+    }
+
+    /** Deriva el codigo corto (NTV, RVR1960…) a partir del nombre del archivo .fsb. */
+    private deriveCode(version: string): string | undefined {
+        // 1. El nombre del archivo (sin extension) coincide con un alias conocido (ej. "Reina-Valera 1960").
+        const byAlias = CODE_BY_ALIAS.get(version.toLowerCase().replace(/\s+/g, ""))
+        if (byAlias) return byAlias
+
+        // 2. El nombre del archivo ES directamente un codigo (ej. "RVR1960.fsb", "NTV.fsb").
+        const upper = version.toUpperCase().replace(/\s+/g, "")
+        return VERSION_ALIASES[upper] ? upper : undefined
     }
 
     private get biblesFolder(): string {

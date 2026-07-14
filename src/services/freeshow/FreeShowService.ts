@@ -6,11 +6,13 @@ import type { FsShow } from "./showFormat.js"
 /** Error de comunicacion con FreeShow. */
 export class FreeShowError extends Error {}
 
-interface FsProjectShowRef {
+export interface FsProjectShowRef {
     id: string
     name?: string
+    /** Tipo de item del proyecto ("show", "video", "image"…). Ausente = show. */
+    type?: string
 }
-interface FsProject {
+export interface FsProject {
     id?: string
     name?: string
     shows?: FsProjectShowRef[]
@@ -33,6 +35,8 @@ interface FsShowSummary {
  *   get_show, remove_project_item
  */
 export class FreeShowService {
+    /** Tiempo maximo de espera por respuesta REST de FreeShow. Aplicado a toda la operacion (headers + body). */
+    private static readonly REQUEST_TIMEOUT_MS = 8_000
     private restUrl: string
     private socket: Socket | null = null
     private useWs: boolean
@@ -193,27 +197,34 @@ export class FreeShowService {
 
     /** Realiza una peticion REST y devuelve el cuerpo parseado. */
     private async request(action: string, data: Record<string, unknown>): Promise<unknown> {
-        let res: Response
         try {
-            res = await fetch(this.restUrl, {
+            const res = await fetch(this.restUrl, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify({ action, ...data }),
+                signal: AbortSignal.timeout(FreeShowService.REQUEST_TIMEOUT_MS),
             })
+            if (!res.ok) throw new FreeShowError(`FreeShow respondio ${res.status} a "${action}"`)
+            const text = await res.text()
+            if (!text) return null
+            try {
+                return JSON.parse(text)
+            } catch {
+                return text
+            }
         } catch (err) {
+            if (err instanceof FreeShowError) throw err
+            if ((err as { name?: string }).name === "TimeoutError") {
+                throw new FreeShowError(
+                    `FreeShow no respondio en ${FreeShowService.REQUEST_TIMEOUT_MS / 1000}s ` +
+                        `("${action}"). ¿FreeShow esta cargado y con la API activa?`,
+                )
+            }
             throw new FreeShowError(
                 `No se pudo conectar con FreeShow en ${this.restUrl}. ` +
                     `Verifica que FreeShow este abierto y la API activada (Settings -> Connections). ` +
                     `Detalle: ${(err as Error).message}`,
             )
-        }
-        if (!res.ok) throw new FreeShowError(`FreeShow respondio ${res.status} a "${action}"`)
-        const text = await res.text()
-        if (!text) return null
-        try {
-            return JSON.parse(text)
-        } catch {
-            return text
         }
     }
 

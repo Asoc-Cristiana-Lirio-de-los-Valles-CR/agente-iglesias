@@ -57,6 +57,45 @@ export const VERSIONS: Record<string, VersionInfo> = {
         language: "es",
         apiBibleId: "",
     },
+    // Codigos adicionales que FreeShowBibleProvider puede derivar de archivos
+    // instalados (VERSION_ALIASES): deben estar aqui para que el parser los
+    // reconozca como version inline al final de una referencia.
+    RVR1909: {
+        code: "RVR1909",
+        name: "Reina-Valera 1909",
+        language: "es",
+        apiBibleId: "",
+    },
+    LBLA: {
+        code: "LBLA",
+        name: "La Biblia de Las Americas",
+        language: "es",
+        apiBibleId: "",
+    },
+    BDHH: {
+        code: "BDHH",
+        name: "Biblia Dios Habla Hoy",
+        language: "es",
+        apiBibleId: "",
+    },
+    NBD: {
+        code: "NBD",
+        name: "Nueva Biblia al Dia",
+        language: "es",
+        apiBibleId: "",
+    },
+    BLP: {
+        code: "BLP",
+        name: "La Palabra",
+        language: "es",
+        apiBibleId: "",
+    },
+    CST: {
+        code: "CST",
+        name: "Castilian",
+        language: "es",
+        apiBibleId: "",
+    },
 }
 
 /** Normaliza un codigo de version (mayusculas, sin espacios). */

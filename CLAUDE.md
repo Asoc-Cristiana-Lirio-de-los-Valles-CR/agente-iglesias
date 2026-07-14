@@ -31,7 +31,7 @@ npm start                 # node dist/index.js — ejecuta el build compilado
 npm run typecheck         # tsc --noEmit (servidor + electron)
 
 # Tests
-npm test                  # vitest run — 68 pruebas unitarias (sin red ni FreeShow)
+npm test                  # vitest run — 91 pruebas unitarias (sin red ni FreeShow)
 npm run test:watch        # vitest en modo watch
 npm run test:e2e          # requiere FreeShow real corriendo
 
@@ -103,20 +103,21 @@ Formato `Show` (`src/services/freeshow/showFormat.ts`): `slides{id: Slide} → i
 **Límites verificados de la API de FreeShow:**
 - No expone borrado físico de shows (`remove_project_item` solo desvincula; el archivo `.show` queda en disco como huérfano).
 - No expone `get_folders`/`create_folder` ni `create_project` con carpeta destino. El proyecto se localiza por nombre exacto.
+- Todas las llamadas REST tienen timeout de 8s (`REQUEST_TIMEOUT_MS`). Lanza `FreeShowError` con mensaje diferenciado si es timeout vs fallo de conexión.
 
 ### `ProjectSynchronizer` (`src/services/freeshow/ProjectSynchronizer.ts`)
 
 Servicio genérico (no sabe qué es un "versículo"). En cada ejecución, **solo sobre shows con `meta.createdBy === SYNC_TAG` ("AgenteIglesias")**:
 
-1. Busca/crea el proyecto por nombre exacto.
-2. Lee CADA show del proyecto con `get_show` (porque `get_projects` no incluye `meta`) y lo clasifica: con tag → administrado; sin tag o tag distinto → **contenido del usuario, nunca se toca**.
+1. **Una sola** `get_projects` por sincronización; el resultado se reutiliza en todos los pasos siguientes.
+2. Clasifica los shows del proyecto: filtra primero los items de media (`type != "show"`) y referencias colgantes (id ausente en `get_shows`) para no llamar `get_show` sobre ellos (esas llamadas cuelgan ~10s en FreeShow). Los válidos se leen en paralelo (`Promise.all`). Con tag → administrado; sin tag → **contenido del usuario, nunca se toca**. Si `get_shows` falla o devuelve vacío → fallback a leer todos individualmente.
 3. Empareja shows administrados por `name` con los items deseados.
-4. **Reutiliza** (mismo id): llama `set_show` solo si `sameContent()` detecta diferencia (compara `name/category/meta/slides/layouts` con `sortKeysDeep` para neutralizar diferencias de orden de claves).
-5. **Crea** items sin show administrado existente: `selectProject` → snapshot → `createShow` → obtiene id nuevo por diferencia de proyecto → `setShow` → `addToProject`.
+4. **Reutiliza** (mismo id): llama `set_show` en paralelo (máx 5 simultáneos via `mapWithConcurrency`) solo si `sameContent()` detecta diferencia (compara `name/category/meta/slides/layouts` con `sortKeysDeep` para neutralizar diferencias de orden de claves).
+5. **Crea** items sin show administrado existente: **secuencial** — `selectProject` → snapshot → `createShow` → polling con backoff [50,100,150…ms] hasta detectar id nuevo por diferencia de snapshot → `setShow` → `addToProject`. No paralelizar: el id se obtiene por diff de snapshot y creaciones concurrentes harían ambigua la asignación.
 6. **Desvincula** shows administrados sobrantes (`removeProjectItem`, índice descendente).
 7. Devuelve `SyncResult { created, updated, unchanged, unlinked, ignoredUserShows }`.
 
-Reutilizable por futuros módulos que necesiten su propio proyecto fijo.
+`ProjectSynchronizerOptions { createPollDelaysMs?, updateConcurrency? }` permite inyectar delays y concurrencia (útil en tests sin timers reales). Reutilizable por futuros módulos.
 
 ### Proveedores de Biblia — cache-first (`src/services/bible/`)
 
@@ -132,6 +133,8 @@ FreeShowBibleProvider → JsonProvider → SqliteProvider → ApiBibleProvider
 - Formato real de archivos `.fsb`: tupla `[id, Bible]` (no objeto plano). Los campos `book.number` y `chapter.number` vienen como **string** en archivos reales exportados (verificado en producción) — se convierten con `Number()` al indexar.
 - Soporta `verse.text` y `verse.value` (alias legado de versiones antiguas de FreeShow).
 - `resolveFile(version)` busca en este orden: 1) nombre exacto del archivo, 2) código normalizado en mayúsculas, 3) aliases conocidos (`VERSION_ALIASES`: NTV, RVR1960, NVI, TLA, LBLA, DHH/BDHH, PDT…), 4) búsqueda flexible (nombre contiene el código). Esto permite escribir `Juan 3:16 NTV` o `Juan 3:16 Reina-Valera 1960` indistintamente.
+- `listAvailableVersions()` devuelve `{ id, name, code? }` donde `code` es el código corto derivado del nombre del archivo (NTV, RVR1960…). El endpoint `GET /api/scripture/versions` expone este campo para la UI (chips) y el parser inline.
+- `startWatching(onLog?)` / `stopWatching()` / `invalidate()`: vigila la carpeta `Bibles/` con `fs.watch` (debounce 400ms, retry 30s si la carpeta desaparece). Al arrancar la app (`container.ts`) se inicia automáticamente; al cerrar se limpia. Instalar/quitar un `.fsb` invalida el cache y la UI refleja el cambio en ≤15s. `startWatching` es idempotente; `stopWatching` seguro si nunca inició.
 - Solo lectura — nunca escribe en la carpeta de FreeShow.
 
 Otros proveedores: `jsonProvider` (`data/biblias/<VERSION>.json`), `sqliteProvider` (`<VERSION>.db`, tabla `verses`), `apiBibleProvider` (respaldo final, requiere `BIBLE_API_KEY`).

@@ -30,6 +30,7 @@ describe("ProjectSynchronizer (estrategia: reutilizar shows administrados, ignor
         freeshow = {
             findProjectByName: vi.fn(),
             getProjects: vi.fn().mockResolvedValue([]),
+            getShows: vi.fn().mockResolvedValue([]),
             getShow: vi.fn().mockResolvedValue(null),
             createProject: vi.fn(),
             removeProjectItem: vi.fn(),
@@ -46,10 +47,12 @@ describe("ProjectSynchronizer (estrategia: reutilizar shows administrados, ignor
         return new ProjectSynchronizer(freeshow as unknown as FreeShowService, logger)
     }
 
-    /** Configura un proyecto existente con shows dados (mock de getProjects + findProjectByName). */
-    function withProjectShows(shows: { id: string; name: string }[]) {
+    /** Configura un proyecto existente con shows dados (mock de getProjects + findProjectByName + get_shows global). */
+    function withProjectShows(shows: { id: string; name: string; type?: string }[]) {
         freeshow.findProjectByName!.mockResolvedValue({ id: "proj-1", name: "Versiculos", shows })
         freeshow.getProjects!.mockResolvedValue([{ id: "proj-1", name: "Versiculos", shows }])
+        // get_shows global: por defecto, todos los items tipo show del proyecto existen.
+        freeshow.getShows!.mockResolvedValue(shows.filter((s) => !s.type || s.type === "show").map((s) => ({ id: s.id, name: s.name })))
     }
 
     it("crea el proyecto si no existe", async () => {
@@ -233,4 +236,132 @@ describe("ProjectSynchronizer (estrategia: reutilizar shows administrados, ignor
 
         await expect(sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])).rejects.toThrow()
     }, 10000)
+
+    // -------------------- Optimizaciones de rendimiento --------------------
+
+    it("hace una sola llamada get_projects por sincronizacion (sin creaciones) y no usa findProjectByName", async () => {
+        withProjectShows([{ id: "old-show", name: "Juan 3:16 RVR1960" }])
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.getProjects).toHaveBeenCalledTimes(1)
+        expect(freeshow.findProjectByName).not.toHaveBeenCalled()
+    })
+
+    it("si un getShow rechaza, ese show se trata como del usuario y el sync no aborta", async () => {
+        const shows = [
+            { id: "roto", name: "Show ilegible" },
+            { id: "sano", name: "Juan 3:16 RVR1960" },
+        ]
+        withProjectShows(shows)
+        freeshow.getShow!.mockImplementation((id: string) =>
+            id === "roto" ? Promise.reject(new Error("boom")) : Promise.resolve(fakeShow("Juan 3:16 RVR1960")),
+        )
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(result.ignoredUserShows).toBe(1)
+        expect(result.unchanged).toBe(1)
+        expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
+        expect(freeshow.setShow).not.toHaveBeenCalledWith("roto", expect.anything())
+    })
+
+    it("si un set_show de actualizacion falla, syncProject lanza (semantica Promise.all preservada)", async () => {
+        withProjectShows([{ id: "old-show", name: "Juan 3:16 RVR1960" }])
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960", "texto viejo"))
+        freeshow.setShow!.mockRejectedValue(new Error("set_show fallo"))
+
+        await expect(sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960", "texto nuevo")])).rejects.toThrow("set_show fallo")
+    })
+
+    it("resuelve el id del show nuevo en el primer sondeo sin esperar delays", async () => {
+        withProjectShows([])
+        freeshow.createShow!.mockResolvedValue(null)
+        freeshow.getProjectShowIds!.mockReset()
+        freeshow.getProjectShowIds!.mockResolvedValueOnce([]).mockResolvedValue(["show-rapido"])
+
+        const start = Date.now()
+        await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+        const elapsed = Date.now() - start
+
+        // Snapshot + primer sondeo = 2 llamadas; sin pasar por ningun delay del backoff.
+        expect(freeshow.getProjectShowIds).toHaveBeenCalledTimes(2)
+        expect(elapsed).toBeLessThan(200)
+        expect(freeshow.setShow).toHaveBeenCalledWith("show-rapido", expect.anything())
+    })
+
+    it("nunca llama get_show para items de video/imagen del proyecto (los cuenta como contenido del usuario)", async () => {
+        withProjectShows([
+            { id: "D:\\videos\\intro.mp4", name: "intro", type: "video" },
+            { id: "C:\\fotos\\anuncio.jpg", name: "anuncio", type: "image" },
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+        ])
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.getShow).toHaveBeenCalledTimes(1)
+        expect(freeshow.getShow).toHaveBeenCalledWith("s1")
+        expect(result.ignoredUserShows).toBe(2)
+        expect(result.unchanged).toBe(1)
+        expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
+    })
+
+    it("nunca llama get_show para referencias colgantes (id que ya no existe en get_shows) — evita el timeout de 10s de FreeShow", async () => {
+        withProjectShows([
+            { id: "huerfano", name: "Show borrado" },
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+        ])
+        // get_shows global solo conoce s1: "huerfano" apunta a un .show eliminado.
+        freeshow.getShows!.mockResolvedValue([{ id: "s1", name: "Juan 3:16 RVR1960" }])
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.getShow).toHaveBeenCalledTimes(1)
+        expect(freeshow.getShow).toHaveBeenCalledWith("s1")
+        expect(result.ignoredUserShows).toBe(1)
+        expect(result.unchanged).toBe(1)
+        expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
+    })
+
+    it("si get_shows falla, clasifica igual leyendo cada show con get_show (fallback al comportamiento anterior)", async () => {
+        withProjectShows([{ id: "s1", name: "Juan 3:16 RVR1960" }])
+        freeshow.getShows!.mockRejectedValue(new Error("api caida"))
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(result.unchanged).toBe(1)
+    })
+
+    it("si get_shows devuelve lista vacia (respuesta anomala), no filtra refs y lee cada show con get_show (evita crear duplicados)", async () => {
+        // get_shows vacio pero exitoso puede ocurrir si FreeShow esta inicializando
+        // o la respuesta se parsea mal. Con un Set vacio, knownShowIds.has() siempre falla
+        // y TODOS los shows del proyecto se tratan como colgantes — ninguno se lee, todos
+        // se recrean, generando duplicados. El fallback correcto es null (leer todos).
+        withProjectShows([{ id: "s1", name: "Juan 3:16 RVR1960" }])
+        freeshow.getShows!.mockResolvedValue([]) // exito pero vacio
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.getShow).toHaveBeenCalledWith("s1")
+        expect(result.unchanged).toBe(1) // reutilizado, no duplicado
+        expect(result.created).toBe(0)
+    })
+
+    it("respeta el limite de sondeos con delays inyectados [0, 0] y lanza al agotarlos", async () => {
+        withProjectShows([])
+        freeshow.createShow!.mockResolvedValue(null)
+        freeshow.getProjectShowIds!.mockReset()
+        freeshow.getProjectShowIds!.mockResolvedValue([]) // nunca aparece
+
+        const s = new ProjectSynchronizer(freeshow as unknown as FreeShowService, logger, { createPollDelaysMs: [0, 0] })
+
+        await expect(s.syncProject("Versiculos", [item("Juan 3:16 RVR1960")])).rejects.toThrow()
+        // Snapshot (1) + sondeo inmediato (1) + 2 sondeos tras cada delay = 4.
+        expect(freeshow.getProjectShowIds).toHaveBeenCalledTimes(4)
+    })
 })

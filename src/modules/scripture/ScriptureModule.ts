@@ -100,9 +100,17 @@ export class ScriptureModule implements PlatformModule {
         const pending: GenerationItemResult[] = []
         const seenNames = new Set<string>()
 
-        for (const ref of references) {
+        // Busqueda de versiculos en paralelo (cache/archivo/red); el procesado
+        // posterior es secuencial en el orden original para preservar el orden
+        // de salida y la semantica "primero gana" de la deduplicacion.
+        const verseResults = await Promise.allSettled(references.map((ref) => bible.getVerses(ref)))
+
+        for (let i = 0; i < references.length; i++) {
+            const ref = references[i]
+            const settled = verseResults[i]
             try {
-                const verses = await bible.getVerses(ref)
+                if (settled.status === "rejected") throw settled.reason
+                const verses = settled.value
                 const { show, name, slides } = buildShow({
                     bookId: ref.bookId,
                     bookName: ref.bookName,

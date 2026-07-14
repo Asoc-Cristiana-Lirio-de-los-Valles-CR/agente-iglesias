@@ -66,6 +66,8 @@ export function createContainer(config: AppConfig): Container {
     // Servicios
     const cache = new CacheService(repositories.verses)
     const freeshowBible = new FreeShowBibleProvider(config.FREESHOW_DATA_PATH)
+    // Refleja biblias instaladas/quitadas en FreeShow sin reiniciar la app.
+    freeshowBible.startWatching((msg) => logger.child("bibles").info(msg))
     const bible = new BibleService(
         buildBibleProviders(config, freeshowBible),
         cache,
@@ -104,6 +106,7 @@ export function createContainer(config: AppConfig): Container {
         registry,
         repositories,
         close: () => {
+            freeshowBible.stopWatching()
             freeshow.disconnect()
             db.close()
         },

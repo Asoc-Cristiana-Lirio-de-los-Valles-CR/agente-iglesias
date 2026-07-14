@@ -1,7 +1,8 @@
-import type { FreeShowService } from "./FreeShowService.js"
+import type { FreeShowService, FsProject } from "./FreeShowService.js"
 import type { FsShow } from "./showFormat.js"
 import type { Logger } from "../../core/logger/Logger.js"
 import { uid } from "../../core/utils/ids.js"
+import { mapWithConcurrency } from "../../core/utils/concurrency.js"
 
 /** Marca los shows administrados por este sistema. Es tambien el guardrail de seguridad: nunca se toca un show sin este tag. */
 export const SYNC_TAG = "AgenteIglesias"
@@ -61,18 +62,38 @@ export interface SyncResult {
  * funcionalidad a nivel de PROYECTO (nunca se tocan otros proyectos del
  * usuario — eso se garantiza localizando siempre por `projectId` exacto).
  */
+export interface ProjectSynchronizerOptions {
+    /** Esperas entre sondeos al detectar el show nuevo (inyectable en tests). El primer sondeo es siempre inmediato. */
+    createPollDelaysMs?: number[]
+    /** Maximo de escrituras set_show simultaneas (FreeShow procesa REST en su hilo principal). */
+    updateConcurrency?: number
+}
+
+/** Backoff por defecto: sondeos tempranos frecuentes (caso tipico: FreeShow vincula en 100-300ms), total ≈2.4s como antes. */
+const DEFAULT_CREATE_POLL_DELAYS_MS = [50, 100, 150, 250, 350, 450, 550, 500]
+const DEFAULT_UPDATE_CONCURRENCY = 5
+
 export class ProjectSynchronizer {
-    constructor(private freeshow: FreeShowService, private logger: Logger) {}
+    private createPollDelaysMs: number[]
+    private updateConcurrency: number
+
+    constructor(private freeshow: FreeShowService, private logger: Logger, options: ProjectSynchronizerOptions = {}) {
+        this.createPollDelaysMs = options.createPollDelaysMs ?? DEFAULT_CREATE_POLL_DELAYS_MS
+        this.updateConcurrency = options.updateConcurrency ?? DEFAULT_UPDATE_CONCURRENCY
+    }
 
     async syncProject(projectName: string, items: SyncItem[]): Promise<SyncResult> {
-        const projectId = await this.findOrCreateProject(projectName)
-        const { managed, ignoredUserShows } = await this.classifyExistingShows(projectId)
+        // Una sola lectura de get_projects por sincronizacion; se reutiliza abajo.
+        const projects = await this.freeshow.getProjects()
+        const projectId = await this.findOrCreateProject(projectName, projects)
+        const { managed, ignoredUserShows } = await this.classifyExistingShows(projectId, projects)
 
         const existingByName = new Map(managed.map((m) => [m.name, m]))
         const desiredNames = new Set(items.map((i) => i.name))
 
-        let created = 0
-        let updated = 0
+        // Fase 1: particionar sin awaits.
+        const toUpdate: { id: string; desired: FsShow }[] = []
+        const toCreate: { item: SyncItem; desired: FsShow }[] = []
         let unchanged = 0
 
         for (const item of items) {
@@ -83,14 +104,24 @@ export class ProjectSynchronizer {
                 if (this.sameContent(existing.show, desired)) {
                     unchanged++
                 } else {
-                    await this.freeshow.setShow(existing.id, desired)
-                    updated++
+                    toUpdate.push({ id: existing.id, desired })
                 }
             } else {
-                await this.createAndLink(projectId, item, desired)
-                created++
+                toCreate.push({ item, desired })
             }
         }
+
+        // Fase 2: actualizaciones en paralelo (ids conocidos y distintos; un fallo lanza, como antes).
+        await mapWithConcurrency(toUpdate, this.updateConcurrency, (u) => this.freeshow.setShow(u.id, u.desired))
+        const updated = toUpdate.length
+
+        // Fase 3: creaciones SECUENCIALES — NO paralelizar: el id del show nuevo
+        // se obtiene por diferencia de snapshot del proyecto y creaciones
+        // concurrentes harian ambigua la asignacion id↔item.
+        for (const { item, desired } of toCreate) {
+            await this.createAndLink(projectId, item, desired)
+        }
+        const created = toCreate.length
 
         const toRemove = managed.filter((m) => !desiredNames.has(m.name)).sort((a, b) => b.index - a.index) // descendente: remove_project_item hace splice por indice
 
@@ -105,8 +136,8 @@ export class ProjectSynchronizer {
         return { projectId, created, updated, unchanged, unlinked: toRemove.length, ignoredUserShows }
     }
 
-    private async findOrCreateProject(name: string): Promise<string> {
-        const existing = await this.freeshow.findProjectByName(name)
+    private async findOrCreateProject(name: string, projects: FsProject[]): Promise<string> {
+        const existing = projects.find((p) => (p.name ?? "").trim() === name.trim())
         if (existing?.id) return existing.id
 
         const projectId = uid()
@@ -115,33 +146,61 @@ export class ProjectSynchronizer {
     }
 
     /**
-     * Lee cada show actual del proyecto y lo clasifica por `meta.createdBy`.
-     * Si no se puede leer el contenido (id obsoleto, etc.) se trata como NO
-     * administrado por seguridad (nunca se toca algo que no se pudo verificar).
+     * Lee cada show actual del proyecto (en paralelo) y lo clasifica por
+     * `meta.createdBy`. Si no se puede leer el contenido (id obsoleto, error
+     * de lectura, etc.) se trata como NO administrado por seguridad (nunca se
+     * toca algo que no se pudo verificar).
+     * Un proyecto recien creado no aparece en `projects`: refs vacias, correcto.
+     *
+     * Antes de leer contenido se descartan sin get_show (van directo a
+     * "contenido del usuario"):
+     *   - items de media (`type` video/imagen…): no son shows;
+     *   - referencias colgantes (id ausente en get_shows: el .show fue
+     *     borrado del disco). En ambos casos get_show de FreeShow no responde
+     *     y cuelga ~10s, verificado contra FreeShow real.
      */
     private async classifyExistingShows(
         projectId: string,
+        projects: FsProject[],
     ): Promise<{ managed: { id: string; name: string; index: number; show: FsShow }[]; ignoredUserShows: number }> {
-        const refs = await this.currentShows(projectId)
+        const refs = projects.find((p) => p.id === projectId)?.shows ?? []
+
+        // Ids de shows que existen de verdad (1 llamada barata). Si la lectura
+        // falla O devuelve vacio con refs en el proyecto (respuesta anomala: FreeShow
+        // inicializando, parseo fallido…), se degrada al comportamiento anterior
+        // (get_show para todos). Un Set vacio seria truthy y filtraria TODO,
+        // convirtiendo shows administrados en colgantes y generando duplicados.
+        let knownShowIds: Set<string> | null = null
+        if (refs.length > 0) {
+            try {
+                const allShows = await this.freeshow.getShows()
+                knownShowIds = allShows.length > 0 ? new Set(allShows.map((s) => s.id)) : null
+            } catch {
+                knownShowIds = null
+            }
+        }
+
+        const shows = await Promise.all(
+            refs.map((ref) => {
+                if (ref.type && ref.type !== "show") return Promise.resolve(null)
+                if (knownShowIds && !knownShowIds.has(ref.id)) return Promise.resolve(null)
+                return this.freeshow.getShow(ref.id).catch(() => null)
+            }),
+        )
+
         const managed: { id: string; name: string; index: number; show: FsShow }[] = []
         let ignoredUserShows = 0
 
         for (let index = 0; index < refs.length; index++) {
-            const ref = refs[index]
-            const show = await this.freeshow.getShow(ref.id)
+            const show = shows[index]
             if (show && show.meta?.createdBy === SYNC_TAG) {
-                managed.push({ id: ref.id, name: show.name, index, show })
+                managed.push({ id: refs[index].id, name: show.name, index, show })
             } else {
                 ignoredUserShows++
             }
         }
 
         return { managed, ignoredUserShows }
-    }
-
-    private async currentShows(projectId: string): Promise<{ id: string; name?: string }[]> {
-        const projects = await this.freeshow.getProjects()
-        return projects.find((p) => p.id === projectId)?.shows ?? []
     }
 
     private async createAndLink(projectId: string, item: SyncItem, taggedShow: FsShow): Promise<void> {
@@ -155,22 +214,30 @@ export class ProjectSynchronizer {
         await this.freeshow.createShow(item.name, item.fallbackText)
 
         // 4. Esperar a que el nuevo show aparezca en el proyecto (FreeShow lo vincula async).
-        let showId: string | null = null
-        for (let attempt = 0; attempt < 8; attempt++) {
-            const idsAfter = await this.freeshow.getProjectShowIds(projectId)
-            const newIds = idsAfter.filter((id) => !idsBefore.has(id))
-            if (newIds.length > 0) {
-                showId = newIds[newIds.length - 1]
-                break
-            }
-            await new Promise((r) => setTimeout(r, 300))
-        }
+        const showId = await this.waitForNewShowId(projectId, idsBefore)
         if (!showId) throw new Error(`No se pudo obtener el id del show "${item.name}" tras crearlo.`)
 
         // 5. set_show aplica el JSON completo (nombre correcto con ':', tag, slides, layouts).
         await this.freeshow.setShow(showId, taggedShow)
         // add_to_project es idem-potente: si ya esta vinculado no hace nada, pero garantiza consistencia.
         await this.freeshow.addToProject(projectId, showId, item.name)
+    }
+
+    /**
+     * Sondea los ids del proyecto hasta detectar uno nuevo respecto al
+     * snapshot. Primer sondeo inmediato; luego una espera por cada entrada de
+     * `createPollDelaysMs` (backoff creciente, total ≈2.4s por defecto).
+     */
+    private async waitForNewShowId(projectId: string, idsBefore: Set<string>): Promise<string | null> {
+        for (let attempt = 0; attempt <= this.createPollDelaysMs.length; attempt++) {
+            const idsAfter = await this.freeshow.getProjectShowIds(projectId)
+            const newIds = idsAfter.filter((id) => !idsBefore.has(id))
+            if (newIds.length > 0) return newIds[newIds.length - 1]
+            if (attempt < this.createPollDelaysMs.length) {
+                await new Promise((r) => setTimeout(r, this.createPollDelaysMs[attempt]))
+            }
+        }
+        return null
     }
 
     private tagged(show: FsShow): FsShow {
