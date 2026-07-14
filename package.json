@@ -1,6 +1,6 @@
 {
   "name": "agente-iglesias",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Plataforma modular para iglesias. Modulo 1: generador automatico de presentaciones biblicas en FreeShow.",
   "type": "module",
   "main": "dist-electron/electron/main.js",
