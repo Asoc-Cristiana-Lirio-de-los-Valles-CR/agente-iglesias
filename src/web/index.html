@@ -102,6 +102,8 @@
             transition: border-color .15s, background .15s;
         }
         .chip:hover, .chip:focus-visible { border-color: var(--accent); background: rgba(99,102,241,.15); outline: none; }
+        .version-prefs-list { display: flex; flex-direction: column; gap: .3rem; max-height: 220px; overflow-y: auto; }
+        .version-prefs-list label { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--text); cursor: pointer; }
     </style>
 </head>
 <body>
@@ -143,8 +145,14 @@
             <div class="chips-header">
                 <span class="dot" id="versionsLive" title="Lista actualizada automáticamente"></span>
                 <span>Versiones instaladas en FreeShow (clic para usar)</span>
+                <button type="button" class="help-btn" id="versionsPrefsToggle" aria-expanded="false"
+                    aria-controls="versionsPrefsPanel" title="Elegir qué versiones mostrar">⚙</button>
             </div>
             <div class="chips" id="versionChips"></div>
+            <div class="help-panel hidden" id="versionsPrefsPanel">
+                <h3>Versiones visibles</h3>
+                <div class="version-prefs-list" id="versionsPrefsList"></div>
+            </div>
 
             <div class="row">
                 <div>
@@ -229,6 +237,7 @@
                 sel.value = versions.some((v) => v.id === selected) ? selected : ""
 
                 renderVersionChips(versions)
+                renderVersionPrefsList(versions)
             } catch {
                 $("versionsLive").className = "dot"
             }
@@ -237,14 +246,44 @@
         function renderVersionChips(versions) {
             const cont = $("versionChips"); cont.innerHTML = ""
             for (const v of versions) {
-                // El codigo corto (NTV, RVR1960…) es el que entiende el parser
-                // dentro de la referencia; el nombre largo queda como tooltip.
-                const label = v.code || v.id
+                if (!v.enabled) continue
+                // El chip muestra codigo + nombre completo (formato consistente);
+                // al insertar en la referencia se usa solo el codigo corto.
                 const chip = document.createElement("button")
-                chip.type = "button"; chip.className = "chip"; chip.textContent = label
+                chip.type = "button"; chip.className = "chip"; chip.textContent = `${v.code} | ${v.name}`
                 chip.title = `Usar ${v.name} en la línea actual`
-                chip.onclick = () => insertVersionAtCurrentLine(label)
+                chip.onclick = () => insertVersionAtCurrentLine(v.code)
                 cont.appendChild(chip)
+            }
+        }
+
+        function renderVersionPrefsList(versions) {
+            const cont = $("versionsPrefsList"); cont.innerHTML = ""
+            for (const v of versions) {
+                const label = document.createElement("label")
+                const checkbox = document.createElement("input")
+                checkbox.type = "checkbox"; checkbox.checked = v.enabled
+                checkbox.onchange = () => toggleVersionEnabled(v.id, checkbox.checked)
+                label.appendChild(checkbox)
+                label.append(`${v.code} | ${v.name}`)
+                cont.appendChild(label)
+            }
+        }
+
+        async function toggleVersionEnabled(id, enabled) {
+            const disabled = installedVersions.filter((v) => (v.id === id ? !enabled : !v.enabled)).map((v) => v.id)
+            try {
+                const r = await fetch("/api/scripture/versions/preferences", {
+                    method: "PUT",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({ disabled }),
+                })
+                const { versions } = await r.json()
+                installedVersions = versions
+                renderVersionChips(versions)
+                renderVersionPrefsList(versions)
+            } catch {
+                renderVersionPrefsList(installedVersions) // revertir checkbox visualmente
             }
         }
 
@@ -282,6 +321,12 @@
             const panel = $("helpPanel")
             const open = panel.classList.toggle("hidden") === false
             $("helpToggle").setAttribute("aria-expanded", String(open))
+        }
+
+        $("versionsPrefsToggle").onclick = () => {
+            const panel = $("versionsPrefsPanel")
+            const open = panel.classList.toggle("hidden") === false
+            $("versionsPrefsToggle").setAttribute("aria-expanded", String(open))
         }
 
         $("example").onclick = () => {
