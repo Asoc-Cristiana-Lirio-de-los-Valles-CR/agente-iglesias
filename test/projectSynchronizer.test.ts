@@ -308,12 +308,13 @@ describe("ProjectSynchronizer (estrategia: reutilizar shows administrados, ignor
         expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
     })
 
-    it("nunca llama get_show para referencias colgantes (id que ya no existe en get_shows) — evita el timeout de 10s de FreeShow", async () => {
+    it("limpia automaticamente una referencia colgante (id que ya no existe en get_shows) sin llamar get_show sobre ella", async () => {
         withProjectShows([
             { id: "huerfano", name: "Show borrado" },
             { id: "s1", name: "Juan 3:16 RVR1960" },
         ])
         // get_shows global solo conoce s1: "huerfano" apunta a un .show eliminado.
+        // withProjectShows deja mockResolvedValue persistente: la reconfirmacion (2da lectura) devuelve lo mismo.
         freeshow.getShows!.mockResolvedValue([{ id: "s1", name: "Juan 3:16 RVR1960" }])
         freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
 
@@ -321,9 +322,90 @@ describe("ProjectSynchronizer (estrategia: reutilizar shows administrados, ignor
 
         expect(freeshow.getShow).toHaveBeenCalledTimes(1)
         expect(freeshow.getShow).toHaveBeenCalledWith("s1")
-        expect(result.ignoredUserShows).toBe(1)
         expect(result.unchanged).toBe(1)
+        expect(result.ignoredUserShows).toBe(0) // ya no cuenta como "contenido de usuario": es un puntero roto, se limpia
+        expect(result.danglingRemoved).toBe(1)
+        expect(freeshow.removeProjectItem).toHaveBeenCalledTimes(1)
+        expect(freeshow.removeProjectItem).toHaveBeenCalledWith("proj-1", 0) // indice de "huerfano"
+    })
+
+    it("limpia solo la referencia colgante cuando coexiste con un show administrado y un show de usuario real", async () => {
+        const shows = [
+            { id: "huerfano", name: "Show borrado" },
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+            { id: "manual-1", name: "Bienvenida del pastor" },
+        ]
+        withProjectShows(shows)
+        freeshow.getShows!.mockResolvedValue([
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+            { id: "manual-1", name: "Bienvenida del pastor" },
+        ])
+        freeshow.getShow!.mockImplementation((id: string) => {
+            if (id === "s1") return Promise.resolve(fakeShow("Juan 3:16 RVR1960"))
+            if (id === "manual-1") return Promise.resolve(fakeShow("Bienvenida del pastor", "x", false))
+            return Promise.resolve(null)
+        })
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.removeProjectItem).toHaveBeenCalledTimes(1)
+        expect(freeshow.removeProjectItem).toHaveBeenCalledWith("proj-1", 0) // solo "huerfano"
+        expect(result.danglingRemoved).toBe(1)
+        expect(result.ignoredUserShows).toBe(1) // manual-1: contenido real de usuario, nunca tocado
+        expect(result.unchanged).toBe(1)
+    })
+
+    it("si la reconfirmacion de get_shows ya no muestra la referencia como colgante (aparecio entre lecturas), no la elimina", async () => {
+        withProjectShows([
+            { id: "recien-creado", name: "Show en proceso" },
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+        ])
+        freeshow.getShows!
+            .mockReset()
+            .mockResolvedValueOnce([{ id: "s1", name: "Juan 3:16 RVR1960" }]) // 1ra lectura: aun no aparece
+            .mockResolvedValueOnce([
+                { id: "s1", name: "Juan 3:16 RVR1960" },
+                { id: "recien-creado", name: "Show en proceso" },
+            ]) // reconfirmacion: ya aparecio
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
         expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
+        expect(result.danglingRemoved).toBe(0)
+    })
+
+    it("si la reconfirmacion de get_shows falla, no elimina nada ese ciclo", async () => {
+        withProjectShows([
+            { id: "huerfano", name: "Show borrado" },
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+        ])
+        freeshow.getShows!
+            .mockReset()
+            .mockResolvedValueOnce([{ id: "s1", name: "Juan 3:16 RVR1960" }]) // 1ra lectura
+            .mockRejectedValueOnce(new Error("api caida")) // reconfirmacion falla
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
+        expect(result.danglingRemoved).toBe(0)
+    })
+
+    it("nunca cuenta multimedia como colgante aunque su ruta no este en get_shows", async () => {
+        withProjectShows([
+            { id: "D:\\videos\\intro.mp4", name: "intro", type: "video" },
+            { id: "s1", name: "Juan 3:16 RVR1960" },
+        ])
+        // get_shows global solo lista shows reales: el .mp4 nunca aparece aqui (no es un show).
+        freeshow.getShows!.mockResolvedValue([{ id: "s1", name: "Juan 3:16 RVR1960" }])
+        freeshow.getShow!.mockResolvedValue(fakeShow("Juan 3:16 RVR1960"))
+
+        const result = await sync().syncProject("Versiculos", [item("Juan 3:16 RVR1960")])
+
+        expect(freeshow.removeProjectItem).not.toHaveBeenCalled()
+        expect(result.danglingRemoved).toBe(0)
+        expect(result.ignoredUserShows).toBe(1) // el video: contenido de usuario, no colgante
     })
 
     it("si get_shows falla, clasifica igual leyendo cada show con get_show (fallback al comportamiento anterior)", async () => {

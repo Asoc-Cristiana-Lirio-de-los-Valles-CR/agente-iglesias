@@ -3,12 +3,12 @@
   "resolution": { "width": 1920, "height": 1080 },
   "background": { "type": "color", "value": "#000000" },
   "title": {
-    "top": 0, "left": 0, "width": 0, "height": 0,
+    "top": 40, "left": 100, "width": 1720, "height": 130,
     "align": "center", "valign": "center",
-    "fontFamily": "Arial", "fontSize": 1, "color": "#000000"
+    "fontFamily": "Arial", "fontSize": 70, "color": "#FFFFFF", "bold": true
   },
   "content": {
-    "top": 60, "left": 100, "width": 1720, "height": 840,
+    "top": 180, "left": 100, "width": 1720, "height": 720,
     "align": "center", "valign": "center",
     "fontFamily": "Arial", "fontSize": 88, "color": "#FFFFFF", "bold": true
   },

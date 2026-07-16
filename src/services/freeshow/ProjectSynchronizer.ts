@@ -1,4 +1,4 @@
-import type { FreeShowService, FsProject } from "./FreeShowService.js"
+import type { FreeShowService, FsProject, FsProjectShowRef } from "./FreeShowService.js"
 import type { FsShow } from "./showFormat.js"
 import type { Logger } from "../../core/logger/Logger.js"
 import { uid } from "../../core/utils/ids.js"
@@ -28,6 +28,8 @@ export interface SyncResult {
     unlinked: number
     /** Shows del proyecto SIN el tag de esta app (contenido del usuario): nunca tocados. */
     ignoredUserShows: number
+    /** Referencias colgantes desvinculadas (id ya inexistente en get_shows, confirmado por doble lectura). */
+    danglingRemoved: number
 }
 
 /**
@@ -86,7 +88,7 @@ export class ProjectSynchronizer {
         // Una sola lectura de get_projects por sincronizacion; se reutiliza abajo.
         const projects = await this.freeshow.getProjects()
         const projectId = await this.findOrCreateProject(projectName, projects)
-        const { managed, ignoredUserShows } = await this.classifyExistingShows(projectId, projects)
+        const { managed, ignoredUserShows, dangling } = await this.classifyExistingShows(projectId, projects)
 
         const existingByName = new Map(managed.map((m) => [m.name, m]))
         const desiredNames = new Set(items.map((i) => i.name))
@@ -123,17 +125,54 @@ export class ProjectSynchronizer {
         }
         const created = toCreate.length
 
-        const toRemove = managed.filter((m) => !desiredNames.has(m.name)).sort((a, b) => b.index - a.index) // descendente: remove_project_item hace splice por indice
+        const managedToRemove = managed.filter((m) => !desiredNames.has(m.name))
+        // Reconfirmar colgantes justo antes de eliminar (segunda lectura get_shows):
+        // protege contra la posible carrera de un show recien vinculado que la
+        // primera lectura aun no reflejaba. Si la reconfirmacion falla, no se
+        // elimina nada este ciclo (conservador; se reintenta en la proxima sync).
+        const danglingToRemove = await this.confirmDangling(dangling)
 
-        for (const m of toRemove) {
-            await this.freeshow.removeProjectItem(projectId, m.index)
+        const toRemove = [...managedToRemove.map((m) => m.index), ...danglingToRemove.map((d) => d.index)].sort(
+            (a, b) => b - a, // descendente: remove_project_item hace splice por indice
+        )
+
+        for (const index of toRemove) {
+            await this.freeshow.removeProjectItem(projectId, index)
         }
 
         this.logger.info(
             `Proyecto "${projectName}" sincronizado: ${created} creados, ${updated} actualizados, ` +
-                `${unchanged} sin cambios, ${toRemove.length} desvinculados, ${ignoredUserShows} ignorados (contenido del usuario)`,
+                `${unchanged} sin cambios, ${managedToRemove.length} desvinculados, ${danglingToRemove.length} colgantes limpiados, ` +
+                `${ignoredUserShows} ignorados (contenido del usuario)`,
         )
-        return { projectId, created, updated, unchanged, unlinked: toRemove.length, ignoredUserShows }
+        return {
+            projectId,
+            created,
+            updated,
+            unchanged,
+            unlinked: managedToRemove.length,
+            ignoredUserShows,
+            danglingRemoved: danglingToRemove.length,
+        }
+    }
+
+    /**
+     * Reconfirma referencias colgantes con una segunda lectura de get_shows()
+     * inmediatamente antes de eliminarlas. Si esta segunda lectura falla, no
+     * elimina nada (conservador: mejor dejar basura una sincronizacion mas que
+     * arriesgar borrar una referencia valida por una lectura transitoria).
+     * O(n) sobre el total de shows de FreeShow (una sola pasada, un solo Set).
+     */
+    private async confirmDangling(dangling: { id: string; index: number }[]): Promise<{ id: string; index: number }[]> {
+        if (dangling.length === 0) return []
+        let recheck: { id: string }[]
+        try {
+            recheck = await this.freeshow.getShows()
+        } catch {
+            return []
+        }
+        const stillKnownIds = new Set(recheck.map((s) => s.id))
+        return dangling.filter((d) => !stillKnownIds.has(d.id))
     }
 
     private async findOrCreateProject(name: string, projects: FsProject[]): Promise<string> {
@@ -162,7 +201,11 @@ export class ProjectSynchronizer {
     private async classifyExistingShows(
         projectId: string,
         projects: FsProject[],
-    ): Promise<{ managed: { id: string; name: string; index: number; show: FsShow }[]; ignoredUserShows: number }> {
+    ): Promise<{
+        managed: { id: string; name: string; index: number; show: FsShow }[]
+        ignoredUserShows: number
+        dangling: { id: string; index: number }[]
+    }> {
         const refs = projects.find((p) => p.id === projectId)?.shows ?? []
 
         // Ids de shows que existen de verdad (1 llamada barata). Si la lectura
@@ -180,6 +223,12 @@ export class ProjectSynchronizer {
             }
         }
 
+        // Colgante = referencia a un show ("type" ausente o "show") cuyo id ya
+        // no existe en get_shows(). No es contenido de usuario (no hay show
+        // real detras): se separa de ignoredUserShows para poder limpiarla.
+        const isDangling = (ref: FsProjectShowRef): boolean =>
+            (!ref.type || ref.type === "show") && knownShowIds !== null && !knownShowIds.has(ref.id)
+
         const shows = await Promise.all(
             refs.map((ref) => {
                 if (ref.type && ref.type !== "show") return Promise.resolve(null)
@@ -189,9 +238,14 @@ export class ProjectSynchronizer {
         )
 
         const managed: { id: string; name: string; index: number; show: FsShow }[] = []
+        const dangling: { id: string; index: number }[] = []
         let ignoredUserShows = 0
 
         for (let index = 0; index < refs.length; index++) {
+            if (isDangling(refs[index])) {
+                dangling.push({ id: refs[index].id, index })
+                continue
+            }
             const show = shows[index]
             if (show && show.meta?.createdBy === SYNC_TAG) {
                 managed.push({ id: refs[index].id, name: show.name, index, show })
@@ -200,7 +254,7 @@ export class ProjectSynchronizer {
             }
         }
 
-        return { managed, ignoredUserShows }
+        return { managed, ignoredUserShows, dangling }
     }
 
     private async createAndLink(projectId: string, item: SyncItem, taggedShow: FsShow): Promise<void> {

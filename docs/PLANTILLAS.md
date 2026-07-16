@@ -40,7 +40,7 @@ Cada plantilla define tres cuadros de texto — **título**, **contenido** y
 |-------|---------|-------------|
 | `top`, `left`, `width`, `height` | número (px) | Posición y tamaño en el lienzo. |
 | `align` | `left` `center` `right` | Alineación horizontal del texto. |
-| `valign` | `top` `center` `bottom` | Alineación vertical dentro del cuadro. |
+| `valign` | `top` `center` `bottom` | Alineación vertical dentro del cuadro. **Solo tiene efecto en `footer`** — `title` y `content` se fusionan en un solo bloque (título arriba, versículo debajo) que siempre se centra como unidad, sin importar el `valign` que tenga cada uno por separado. |
 | `fontFamily` | nombre de fuente | Tipografía (debe existir en el sistema/FreeShow). |
 | `fontSize` | número (px) | Tamaño de letra. |
 | `color` | hex (`#RRGGBB`) | Color del texto. |
