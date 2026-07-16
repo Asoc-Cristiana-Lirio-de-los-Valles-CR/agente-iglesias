@@ -73,3 +73,42 @@ describe("ScriptureModule.generate (busqueda de versiculos en paralelo)", () => 
         expect(result.items[1].skipped).toBe(true)
     })
 })
+
+describe("ScriptureModule.getVersions / setDisabledVersions (preferencias de chips)", () => {
+    function makePrefsModule(versions: { id: string; name: string; code: string }[]) {
+        const store = new Map<string, string>()
+        const configRepo = {
+            get: (key: string) => store.get(key),
+            set: (key: string, value: string) => { store.set(key, value) },
+        }
+        const deps = { configRepo, freeshowBible: { listAvailableVersions: () => versions } }
+        return { module: new ScriptureModule(deps as unknown as ScriptureModuleDeps), store }
+    }
+
+    const sample = [
+        { id: "Reina-Valera 1960", name: "Reina-Valera 1960", code: "RVR1960" },
+        { id: "Biblia Jerusalén", name: "Biblia Jerusalén", code: "BJ" },
+    ]
+
+    it("todas las versiones vienen enabled:true por defecto (sin preferencias guardadas)", () => {
+        const { module } = makePrefsModule(sample)
+        expect(module.getVersions()).toEqual([
+            { id: "Reina-Valera 1960", name: "Reina-Valera 1960", code: "RVR1960", enabled: true },
+            { id: "Biblia Jerusalén", name: "Biblia Jerusalén", code: "BJ", enabled: true },
+        ])
+    })
+
+    it("setDisabledVersions persiste y refleja enabled:false solo en las deshabilitadas", () => {
+        const { module } = makePrefsModule(sample)
+        const updated = module.setDisabledVersions(["Biblia Jerusalén"])
+        expect(updated.find((v) => v.id === "Biblia Jerusalén")?.enabled).toBe(false)
+        expect(updated.find((v) => v.id === "Reina-Valera 1960")?.enabled).toBe(true)
+        expect(module.getVersions().find((v) => v.id === "Biblia Jerusalén")?.enabled).toBe(false)
+    })
+
+    it("JSON invalido en config no rompe: cae a todas activas", () => {
+        const { module, store } = makePrefsModule(sample)
+        store.set("disabledBibleVersions", "{not-json")
+        expect(module.getVersions().every((v) => v.enabled)).toBe(true)
+    })
+})

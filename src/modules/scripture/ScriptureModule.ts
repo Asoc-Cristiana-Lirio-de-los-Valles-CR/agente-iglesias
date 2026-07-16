@@ -30,6 +30,13 @@ export interface GenerateOptions {
     template?: string
 }
 
+export interface InstalledVersionInfo {
+    id: string
+    name: string
+    code: string
+    enabled: boolean
+}
+
 /** Proyecto fijo de FreeShow administrado exclusivamente por este modulo. */
 const VERSES_PROJECT_NAME = "Versiculos"
 
@@ -51,7 +58,14 @@ export class ScriptureModule implements PlatformModule {
             res.json({ templates: this.deps.templates.list(), active: this.activeTemplateName() })
         })
         router.get("/scripture/versions", (_req, res) => {
-            res.json({ versions: this.deps.freeshowBible.listAvailableVersions() })
+            res.json({ versions: this.getVersions() })
+        })
+        router.put("/scripture/versions/preferences", (req, res) => {
+            const body = req.body as { disabled?: unknown }
+            const disabled = Array.isArray(body?.disabled)
+                ? body.disabled.filter((x): x is string => typeof x === "string")
+                : []
+            res.json({ versions: this.setDisabledVersions(disabled) })
         })
     }
 
@@ -73,6 +87,32 @@ export class ScriptureModule implements PlatformModule {
 
     private activeTemplateName(): string {
         return this.deps.configRepo.get("template") ?? this.deps.config.TEMPLATE
+    }
+
+    private static readonly DISABLED_VERSIONS_KEY = "disabledBibleVersions"
+
+    /** Ids de versiones ocultas de los chips (persistido en config). Vacio = todas activas. */
+    private getDisabledVersionIds(): string[] {
+        const raw = this.deps.configRepo.get(ScriptureModule.DISABLED_VERSIONS_KEY)
+        if (!raw) return []
+        try {
+            const parsed = JSON.parse(raw)
+            return Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === "string") : []
+        } catch {
+            return []
+        }
+    }
+
+    /** Versiones instaladas + flag `enabled` segun las preferencias guardadas. */
+    getVersions(): InstalledVersionInfo[] {
+        const disabled = new Set(this.getDisabledVersionIds())
+        return this.deps.freeshowBible.listAvailableVersions().map((v) => ({ ...v, enabled: !disabled.has(v.id) }))
+    }
+
+    /** Reemplaza la lista completa de versiones ocultas y devuelve el estado actualizado. */
+    setDisabledVersions(ids: string[]): InstalledVersionInfo[] {
+        this.deps.configRepo.set(ScriptureModule.DISABLED_VERSIONS_KEY, JSON.stringify(ids))
+        return this.getVersions()
     }
 
     /**
