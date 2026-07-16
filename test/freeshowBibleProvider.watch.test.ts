@@ -72,7 +72,7 @@ describe("FreeShowBibleProvider — invalidacion y watcher (biblias instaladas e
         expect((await provider.getVerses(ref("UNA")))[0].text).toBe("ya sano")
     })
 
-    it("listAvailableVersions() deriva el codigo corto desde los aliases conocidos (para chips y referencias inline)", () => {
+    it("listAvailableVersions() deriva el codigo corto: alias conocido, o autogenerado por iniciales si no hay alias", () => {
         const { provider, biblesDir } = tempProvider()
         writeFileSync(join(biblesDir, "Nueva Traducción Viviente.fsb"), fsb("v"))
         writeFileSync(join(biblesDir, "Reina-Valera 1960.fsb"), fsb("v"))
@@ -81,7 +81,7 @@ describe("FreeShowBibleProvider — invalidacion y watcher (biblias instaladas e
         const byId = new Map(provider.listAvailableVersions().map((v) => [v.id, v.code]))
         expect(byId.get("Nueva Traducción Viviente")).toBe("NTV")
         expect(byId.get("Reina-Valera 1960")).toBe("RVR1960")
-        expect(byId.get("MiBibliaRara")).toBeUndefined() // sin alias conocido: sin codigo
+        expect(byId.get("MiBibliaRara")).toBe("MIBIBLIARARA") // sin alias conocido: autogenerado (un solo token -> el mismo en mayusculas)
     })
 
     it("startWatching() sobre carpeta inexistente no lanza y es idempotente", () => {

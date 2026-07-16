@@ -67,6 +67,28 @@ for (const [code, aliases] of Object.entries(VERSION_ALIASES)) {
     }
 }
 
+/** Palabras que no aportan al codigo autogenerado (conectores en español). */
+const CODE_STOPWORDS = new Set(["de", "la", "el", "en", "los", "las", "un", "una", "para"])
+
+/**
+ * Codigo corto SOLO para mostrar en la UI (chips), cuando el nombre del
+ * archivo no coincide con ningun alias conocido en VERSION_ALIASES.
+ * No participa en la resolucion de referencias inline (Juan 3:16 NTV) —
+ * esa sigue usando exclusivamente VERSION_ALIASES/resolveFile.
+ * Ejemplos: "Biblia Jerusalén" -> "BJ", "Biblia Latinoamericana 95" -> "BL95",
+ * "Reina Valera Gómez 2004" -> "RVG2004", "RVC" (un solo token) -> "RVC".
+ */
+export function deriveInitialsCode(name: string): string {
+    const tokens = name.split(/[\s-]+/).filter(Boolean)
+    if (tokens.length === 1) return tokens[0].toUpperCase()
+
+    const trailingNumber = /^\d+$/.test(tokens[tokens.length - 1]) ? tokens.pop()! : ""
+    const meaningful = tokens.filter((t) => !CODE_STOPWORDS.has(t.toLowerCase()))
+    const source = meaningful.length > 0 ? meaningful : tokens
+    const initials = source.map((t) => t[0].toUpperCase()).join("")
+    return initials + trailingNumber
+}
+
 interface LoadedBible {
     /** nombre de version mostrado por FreeShow (igual que en su carpeta Bibles). */
     name: string
@@ -189,26 +211,32 @@ export class FreeShowBibleProvider implements BibleProvider {
 
     /**
      * Lista las versiones realmente instaladas en la carpeta Bibles de FreeShow.
-     * `code` es el codigo corto (NTV, RVR1960…) si el nombre del archivo coincide
-     * con un alias conocido: es el que se usa en referencias inline y chips de la UI.
+     * `code` es el codigo corto para mostrar en la UI: el de VERSION_ALIASES si
+     * el archivo coincide con un alias conocido, o autogenerado por iniciales
+     * (deriveInitialsCode) si no. Solo para mostrar — la resolucion de
+     * referencias inline sigue usando VERSION_ALIASES/resolveFile.
      */
-    listAvailableVersions(): { id: string; name: string; code?: string }[] {
+    listAvailableVersions(): { id: string; name: string; code: string }[] {
         this.scanFolder()
-        return [...this.filesByVersion.keys()].map((version) => {
-            const code = this.deriveCode(version)
-            return code ? { id: version, name: version, code } : { id: version, name: version }
-        })
+        return [...this.filesByVersion.keys()].map((version) => ({
+            id: version,
+            name: version,
+            code: this.deriveCode(version),
+        }))
     }
 
-    /** Deriva el codigo corto (NTV, RVR1960…) a partir del nombre del archivo .fsb. */
-    private deriveCode(version: string): string | undefined {
+    /** Deriva el codigo corto a mostrar: alias conocido, o autogenerado por iniciales. */
+    private deriveCode(version: string): string {
         // 1. El nombre del archivo (sin extension) coincide con un alias conocido (ej. "Reina-Valera 1960").
         const byAlias = CODE_BY_ALIAS.get(version.toLowerCase().replace(/\s+/g, ""))
         if (byAlias) return byAlias
 
         // 2. El nombre del archivo ES directamente un codigo (ej. "RVR1960.fsb", "NTV.fsb").
         const upper = version.toUpperCase().replace(/\s+/g, "")
-        return VERSION_ALIASES[upper] ? upper : undefined
+        if (VERSION_ALIASES[upper]) return upper
+
+        // 3. Sin alias conocido: codigo autogenerado por iniciales (solo para mostrar).
+        return deriveInitialsCode(version)
     }
 
     private get biblesFolder(): string {
