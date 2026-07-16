@@ -11,7 +11,7 @@ Responder siempre en español. El usuario es Rafael, administra la iglesia "Liri
 **GitHub**: `https://github.com/Asoc-Cristiana-Lirio-de-los-Valles-CR/agente-iglesias`
 **Org**: Asoc-Cristiana-Lirio-de-los-Valles-CR
 **Rama principal**: `main`
-**Versión actual**: 1.0.0
+**Versión actual**: 1.0.1
 
 Estado de las fases Electron:
 - ✅ Fase A — Electron: ventana + servidor (ESM/NodeNext, ServerManager)
@@ -20,6 +20,14 @@ Estado de las fases Electron:
 - ⏳ Fase D — Backup automático pre-update (pendiente)
 - ⏳ Fase E — Rollback tras fallo (pendiente)
 - ⏳ Fase F — Migraciones versionadas (pendiente)
+
+Estado actual del proyecto:
+- ✅ Generación optimizada (~60× más rápida en lotes sin cambios)
+- ✅ Watcher de Biblias en tiempo real (≤15s para reflejar cambios)
+- ✅ Auto Updates (electron-updater + GitHub Releases)
+- ✅ Chips de versión con formato consistente (`CÓDIGO | Nombre`) + toggle activar/desactivar
+- ✅ 101/101 tests
+- ✅ Typecheck limpio
 
 ## Comandos
 
@@ -31,7 +39,7 @@ npm start                 # node dist/index.js — ejecuta el build compilado
 npm run typecheck         # tsc --noEmit (servidor + electron)
 
 # Tests
-npm test                  # vitest run — 91 pruebas unitarias (sin red ni FreeShow)
+npm test                  # vitest run — 101 pruebas unitarias (sin red ni FreeShow)
 npm run test:watch        # vitest en modo watch
 npm run test:e2e          # requiere FreeShow real corriendo
 
@@ -42,8 +50,8 @@ npm run dist              # build completo → installer/Agente para Iglesias Se
 npm run restore:sqlite    # restaurar better-sqlite3 para Node.js después de npm run dist
                           # (dist recompila el addon para Electron y rompe npm test)
 
-# Workflow post-dist
-# npm run dist && npm run restore:sqlite && npm test
+# Workflow post-dist (cerrar npm run dev ANTES — file-lock en better-sqlite3)
+# npm run dist && npm run restore:sqlite && npm test && npm run typecheck
 ```
 
 Ejecutar una sola prueba: `npx vitest run test/referenceParser.test.ts` (o `-t "nombre del test"`).
@@ -83,7 +91,7 @@ Flujo de `ScriptureModule.generate()` (POST `/api/scripture/generate`):
 
 Nombre de show: `Libro Cap:VersIni-VersFin Versión`. Proyecto en FreeShow: siempre `Versiculos`.
 
-`GET /api/scripture/versions` expone las versiones instaladas en FreeShow (escaneo real de `Bibles/*.fsb`). `GET /api/scripture/templates` lista plantillas disponibles.
+`GET /api/scripture/versions` expone las versiones instaladas en FreeShow (escaneo real de `Bibles/*.fsb`), cada una con `{ id, name, code, enabled }`. `PUT /api/scripture/versions/preferences` (body `{ disabled: string[] }`) reemplaza la lista de versiones ocultas de los chips rápidos y devuelve el estado actualizado; persiste en la tabla `config` (key `disabledBibleVersions`, vacío = todas activas). El `<select>` "Versión por defecto" de la UI ignora este filtro — siempre lista todas. `GET /api/scripture/templates` lista plantillas disponibles.
 
 ### Integración con FreeShow (`src/services/freeshow/FreeShowService.ts`)
 
@@ -119,6 +127,11 @@ Servicio genérico (no sabe qué es un "versículo"). En cada ejecución, **solo
 
 `ProjectSynchronizerOptions { createPollDelaysMs?, updateConcurrency? }` permite inyectar delays y concurrencia (útil en tests sin timers reales). Reutilizable por futuros módulos.
 
+> **⚠ Antes de modificar `ProjectSynchronizer`:**
+> - **NO paralelizar `createAndLink`/`create_show`**. FreeShow no devuelve el id del show creado vía REST. El id se obtiene comparando el snapshot del proyecto antes y después de la creación (diff de ids). Con creaciones concurrentes, el diff es ambiguo — no se puede saber qué id corresponde a qué show → shows con JSON incorrecto aplicado.
+> - **`set_show` sí puede ir en paralelo** (`mapWithConcurrency`, límite 5) porque el id ya se conoce antes de llamarlo.
+> - **No aumentar el límite de concurrencia sin medir**: la API REST de FreeShow corre sobre el hilo principal de Electron; concurrencia alta puede congelar la UI de FreeShow sin mejorar el throughput. El límite 5 se eligió para saturar sin bloquear.
+
 ### Proveedores de Biblia — cache-first (`src/services/bible/`)
 
 `BibleService.getVerses()`: caché SQLite → proveedores en orden → guarda en caché → registra en `history`. La caché solo almacena versículos consultados, nunca Biblias completas.
@@ -133,7 +146,7 @@ FreeShowBibleProvider → JsonProvider → SqliteProvider → ApiBibleProvider
 - Formato real de archivos `.fsb`: tupla `[id, Bible]` (no objeto plano). Los campos `book.number` y `chapter.number` vienen como **string** en archivos reales exportados (verificado en producción) — se convierten con `Number()` al indexar.
 - Soporta `verse.text` y `verse.value` (alias legado de versiones antiguas de FreeShow).
 - `resolveFile(version)` busca en este orden: 1) nombre exacto del archivo, 2) código normalizado en mayúsculas, 3) aliases conocidos (`VERSION_ALIASES`: NTV, RVR1960, NVI, TLA, LBLA, DHH/BDHH, PDT…), 4) búsqueda flexible (nombre contiene el código). Esto permite escribir `Juan 3:16 NTV` o `Juan 3:16 Reina-Valera 1960` indistintamente.
-- `listAvailableVersions()` devuelve `{ id, name, code? }` donde `code` es el código corto derivado del nombre del archivo (NTV, RVR1960…). El endpoint `GET /api/scripture/versions` expone este campo para la UI (chips) y el parser inline.
+- `listAvailableVersions()` devuelve `{ id, name, code }` — `code` **siempre presente** (ya no opcional): el de `VERSION_ALIASES` si el archivo coincide con un alias conocido (NTV, RVR1960…), o autogenerado por iniciales via `deriveInitialsCode()` si no (ej. `"Biblia Jerusalén"` → `"BJ"`, stopwords `de/la/el/en/los/las/un/una/para` excluidas, número final preservado: `"Biblia Latinoamericana 95"` → `"BL95"`). Este código autogenerado es **solo para mostrar** en los chips de la UI — la resolución de versión inline en las referencias (`Juan 3:16 NTV`) sigue usando exclusivamente `VERSION_ALIASES`/`resolveFile`, sin tocar.
 - `startWatching(onLog?)` / `stopWatching()` / `invalidate()`: vigila la carpeta `Bibles/` con `fs.watch` (debounce 400ms, retry 30s si la carpeta desaparece). Al arrancar la app (`container.ts`) se inicia automáticamente; al cerrar se limpia. Instalar/quitar un `.fsb` invalida el cache y la UI refleja el cambio en ≤15s. `startWatching` es idempotente; `stopWatching` seguro si nunca inició.
 - Solo lectura — nunca escribe en la carpeta de FreeShow.
 
@@ -187,7 +200,7 @@ electron-builder.yml   ← NSIS + extraResources + publish GitHub
 - **Canal**: `UPDATE_CHANNEL=stable|beta` en `.env` del usuario.
 - **Servidor**: GitHub Releases de `Asoc-Cristiana-Lirio-de-los-Valles-CR/agente-iglesias`.
 - **Flujo**: check al arrancar (10s delay) + cada 24h → descarga background → dialog nativo → `quitAndInstall()`.
-- **Publicar**: `npm run dist` con `GH_TOKEN` en `.env` → subir artifacts al GitHub Release.
+- **Publicar**: cerrar `npm run dev` → `GH_TOKEN` en `.env` → `npm run dist -- --publish always` (genera instalador, crea GitHub Release y sube artifacts con nombres correctos en un solo paso). Si se sube manualmente vía API, GitHub convierte espacios a puntos en los nombres de assets (`Agente.para...`) pero `latest.yml` espera guiones (`Agente-para...`) — mismatch que rompe el auto-update; hay que re-subir con nombre correcto.
 - **Firmar**: sin certificado de código por ahora (Windows mostrará advertencia de seguridad).
 
 ### Problema conocido: better-sqlite3 ABI
@@ -197,6 +210,8 @@ electron-builder.yml   ← NSIS + extraResources + publish GitHub
 ```bash
 npm run restore:sqlite   # restaura el addon para Node.js 24
 ```
+
+**File-lock en Windows (lección aprendida)**: antes de ejecutar `npm run dist`, cerrar cualquier instancia de `npm run dev`, `tsx watch` o Electron del proyecto. En Windows, `better_sqlite3.node` queda bloqueado mientras el proceso está activo y `electron-builder` falla con `EPERM: operation not permitted, unlink better_sqlite3.node`. Para identificar el proceso bloqueador: `Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Select-Object ProcessId,CommandLine`.
 
 ### Ícono pendiente (próxima fase)
 
@@ -223,6 +238,35 @@ npm run restore:sqlite   # restaura el addon para Node.js 24
 
 **Proveedor de Biblia o IA nuevo**: implementar `BibleProvider`/`AIProvider`, añadirlo al `providerFactory.ts` correspondiente.
 
+## Concurrencia
+
+`mapWithConcurrency(items, limit, fn)` — helper en `src/core/utils/concurrency.ts`:
+- Límite actual para `set_show`: **5**. No aumentar sin medir — la API REST de FreeShow corre sobre el hilo principal de Electron y una concurrencia alta puede congelar la UI sin mejorar el throughput. Con 5 workers simultáneos el cuello de botella pasa a ser la latencia de red, no el procesador de FreeShow.
+- Flag `aborted`: si un worker falla, los demás dejan de tomar nuevos items del la cola (`while (!aborted && ...)`). Semántica equivalente a `Promise.all` — primer fallo cancela el lote.
+- `createPollDelaysMs` inyectable en tests para evitar `setTimeout` reales: `new ProjectSynchronizer(fs, logger, { createPollDelaysMs: [0, 0] })`.
+
+## Rendimiento (v1.0.1)
+
+Optimizaciones implementadas para reducir el tiempo de generación de ~10s a ~0.17s en lotes sin cambios (~60×):
+
+- **`ProjectSynchronizer` — una sola `get_projects`**: antes se llamaba 3 veces por sincronización; ahora se llama una vez al inicio y el resultado se pasa a todos los métodos internos.
+- **`classifyExistingShows` — `get_show` en paralelo**: antes secuencial; ahora `Promise.all` sobre los shows válidos (filtrados previamente). Límite de 5 actualizaciones simultáneas via `mapWithConcurrency`.
+- **Filtrado previo a `get_show`**: items de media (`type != "show"`) y referencias colgantes (id ausente en `get_shows`) se descartan antes de llamar `get_show`, que cuelga ~10s en FreeShow para esos casos.
+- **`ScriptureModule` — `Promise.allSettled`**: versículos de todas las referencias se buscan en paralelo; un fallo en una referencia no bloquea las demás.
+- **Watcher de Biblias (`fs.watch` + `invalidate()`)**: en vez de escanear en cada consulta, se escanea una vez y se invalida el caché solo cuando cambia la carpeta `Bibles/`. Debounce 400ms, retry 30s si la carpeta desaparece.
+
+## Bugs corregidos (v1.0.1)
+
+Cuatro bugs corregidos durante el hardening — documentados aquí para no repetirlos:
+
+1. **`mapWithConcurrency` no abortaba tras fallo** (`src/core/utils/concurrency.ts`): con `limit ≥ 2`, cuando un worker fallaba los demás seguían drenando la cola completa. Fix: flag `aborted` + `while (!aborted && ...)`. El bug solo se manifiesta con `limit ≥ 2`; tests con `limit=1` no lo detectan.
+
+2. **`insertVersionAtCurrentLine` rompía el historial de Undo** (`src/web/index.html`): `ta.value = ...` reemplazaba todo el contenido del textarea — Ctrl+Z dejaba de funcionar. Fix: `ta.setRangeText(newLine, lineStart, lineEnd, "end")` reemplaza solo el rango de la línea actual.
+
+3. **`getShows()` vacío generaba shows duplicados** (`ProjectSynchronizer`): si `getShows()` devolvía `[]` (vacío, no error), se creaba un `Set` vacío → `!Set.has(id)` = `true` para todo → todos los shows del proyecto marcados como "colgantes" → iban a `toCreate` → shows duplicados en FreeShow. Fix: `knownShowIds = allShows.length > 0 ? new Set(...) : null`.
+
+4. **`FreeShowService.request()` sin timeout + `res.text()` fuera del try-catch**: cualquier llamada REST podía colgar indefinidamente; si la señal de abort disparaba durante la lectura del cuerpo, la excepción escapaba sin convertirse en `FreeShowError`. Fix: `signal: AbortSignal.timeout(8_000)` en todos los fetch + try-catch unificado que cubre headers y body.
+
 ## Limitaciones conocidas (API de FreeShow)
 
 - **Huérfanos en disco**: shows desvinculados por `remove_project_item` quedan como archivos `.show` en disco de FreeShow (la API no expone borrado físico). Están fuera de cualquier proyecto; no afectan la UI ni el sistema.
@@ -238,11 +282,14 @@ git commit -m "tipo: mensaje"
 git push
 
 # Publicar nueva versión con instalador
-npm version patch             # bumps version (1.0.0 → 1.0.1)
-npm run dist                  # genera installer/ + latest.yml
+# 0. Cerrar npm run dev (evita file-lock en better-sqlite3 durante dist)
+git add -p && git commit -m "feat: ..."   # commit de funcionalidades primero
+npm version patch             # bumps version + commit + tag (ej. 1.0.1 → 1.0.2)
+# GH_TOKEN válido con scope "repo" en .env (verificar antes)
+npm run dist -- --publish always          # build + release + upload en un paso
 npm run restore:sqlite        # restaurar better-sqlite3 para Node.js
-npm test                      # verificar 68/68
-# Crear GitHub Release con tag v1.0.1 y subir artifacts de installer/
+npm test                      # verificar 101/101
+npm run typecheck             # sin errores TypeScript
 ```
 
 **No commitear jamás**: `.env` (tiene `GH_TOKEN`), `node_modules/`, `dist/`, `dist-electron/`, `installer/`.
@@ -254,3 +301,48 @@ npm test                      # verificar 68/68
 - `DRY_RUN=true` deshabilita completamente las escrituras a FreeShow (incluido `ProjectSynchronizer`). Solo registra el JSON en logs.
 - No modificar archivos en `Bibles/` de FreeShow — acceso exclusivamente de lectura.
 - `GH_TOKEN` en `.env` — nunca en el repositorio.
+
+## Pendientes (post v1.0.1)
+
+### Decisiones inmediatas
+- **`pasos Electron.txt`**: archivo con notas de la Fase A, sin commitear desde v1.0.1. Opciones: `git commit` con mensaje `docs: notas sesión Fase A Electron`, `git restore` (descartarlo), o añadir a `.gitignore`. Actualmente aparece como `modified` en cada `git status` — ruido.
+- **GH_TOKEN**: token nuevo creado el 2026-07-14 (usuario `soporteLirio`). Anotar la fecha de vencimiento del token en un lugar seguro. Si expira, `npm run dist -- --publish always` fallará en silencio.
+
+### Próxima versión (v1.1.0 sugerida)
+- **Fase D — Backup automático pre-update** *(alta prioridad)*: antes de `quitAndInstall()`, copiar `app.db` a `app.db.bak`. Sin esto, una actualización con cambios de esquema SQLite puede romper instancias en campo sin posibilidad de rollback.
+- **Fase E — Rollback tras fallo**: si la app no arranca tras update, restaurar `app.db.bak` y bajar a la versión anterior.
+- **Fase F — Migraciones versionadas**: sistema de migraciones numeradas con control de versión de esquema en la BD.
+- **Ícono multi-resolución**: `assets/icon.ico` es PNG único incrustado. Generar versión 16/32/48/256px con `png-to-ico` para mejor legibilidad en barra de tareas.
+- **GitHub Actions / CI**: actualmente cada release depende del entorno local limpio. Automatizar con workflow que ejecute `npm test` + `npm run typecheck` en cada push a `main`.
+
+### Documentación pendiente
+- Guía de primer uso: configurar `.env`, activar API en FreeShow (Settings → Connections), verificar `FREESHOW_DATA_PATH`.
+- Sección `test:e2e`: qué prueba, qué necesita FreeShow corriendo, qué escenarios cubre.
+
+## Changelog
+
+### Sin publicar (sobre v1.0.1, sin bump de versión aún)
+- Chips de versión: formato consistente `CÓDIGO | Nombre completo` para las 18/15 Biblias instaladas (antes mezclaba código corto y nombre completo segun tuviera alias en `VERSION_ALIASES`).
+- `deriveInitialsCode()` (`freeshowBibleProvider.ts`): código corto autogenerado por iniciales para versiones sin alias conocido — solo para mostrar, no afecta la resolución de referencias inline.
+- Nuevo endpoint `PUT /api/scripture/versions/preferences`: activar/desactivar qué versiones aparecen como chip (persistido en `config`, key `disabledBibleVersions`, todas activas por defecto). Panel ⚙ en la UI junto a "Versiones instaladas".
+- Limpieza manual de duplicados reales en la carpeta `Bibles/` de FreeShow de Rafael (18 → 15 archivos): `RVC.fsb` (duplicado de `Reina-Valera Contemporanea.fsb`), `Reina Valera Gómez 2004.fsb` sin guion (duplicado byte-a-byte de `Reina-Valera Gómez 2004.fsb`), y `Dios Habla Hoy.fsb` (misma traducción que `Biblia Dios Habla Hoy.fsb` pero con 6417 entidades HTML `&quot;` mal decodificadas — corrupto, se conservó la copia limpia).
+- 10 tests nuevos (91 → 101): 7 de `deriveInitialsCode`, 3 de `getVersions`/`setDisabledVersions`.
+
+### v1.0.1
+- `ProjectSynchronizer`: una sola `get_projects`, clasificación en paralelo, filtrado de media/refs colgantes → ~60× más rápido en lotes sin cambios.
+- `FreeShowBibleProvider`: watcher `fs.watch` (debounce 400ms, retry 30s), `invalidate()` global, `listAvailableVersions()` con código corto (`code?`).
+- `FreeShowService`: timeout 8s (`AbortSignal.timeout`), try-catch unificado headers+body, mensajes de error diferenciados timeout vs conexión.
+- `ScriptureModule`: búsqueda de versículos en paralelo (`Promise.allSettled`), orden preservado, dedup respeta primer resultado.
+- `mapWithConcurrency`: nuevo helper con flag `aborted` para abort-on-first-failure con `limit ≥ 2`.
+- UI: chips de versiones instaladas (clic para insertar), panel de ayuda (?), inserción preserva historial Undo (`setRangeText`), refresco automático cada 15s.
+- Bugs corregidos: `mapWithConcurrency` abort-flag, `setRangeText` Undo, `getShows()` vacío → duplicados, timeout FreeShowService.
+- 23 nuevos tests (91/91 en verde).
+
+### v1.0.0
+- Lanzamiento inicial: Módulo 1 (generación de presentaciones bíblicas en FreeShow).
+- Instalador NSIS Windows via electron-builder.
+- Auto-updates via electron-updater + GitHub Releases.
+- Parser de referencias bíblicas determinista (66 libros, abreviaturas, rangos).
+- Proveedor FreeShow (.fsb), JSON, SQLite, API.Bible.
+- `ProjectSynchronizer`: sincronización con tag `AgenteIglesias`, nunca toca contenido del usuario.
+- 68 tests unitarios.
